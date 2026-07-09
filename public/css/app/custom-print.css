@@ -1,0 +1,58 @@
+@media print {
+    /* 1. Force exact colors and dark mode */
+    * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+    }
+
+    /* 2. Set the paper size and margins */
+    @page {
+        size: A4 portrait;
+        margin: 1cm;
+    }
+
+    /* 3. Hide the sidebar, top navigation, and buttons */
+    .fi-sidebar, 
+    .fi-topbar,
+    .fi-modal-close-btn,
+    .fi-modal-close-overlay,
+    button {
+        display: none !important;
+    }
+
+    /* 4. Force the modal window to take up the full paper width */
+    .fi-modal-window {
+        width: 100% !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        box-shadow: none !important;
+    }
+
+    /* 5. THE MAGIC FIX: Force the layout to stay side-by-side! */
+    .grid {
+        display: grid !important;
+    }
+    
+    /* If the code asks for 2 columns, force 2 columns on paper */
+    [style*="--cols-default: 2"], [style*="--cols-sm: 2"], [style*="--cols-md: 2"], [style*="--cols-lg: 2"] {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+    
+    /* If the code asks for 3 columns, force 3 columns on paper */
+    [style*="--cols-default: 3"], [style*="--cols-sm: 3"], [style*="--cols-md: 3"], [style*="--cols-lg: 3"] {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    }
+
+    /* If the code asks for 4 columns, force 4 columns on paper */
+    [style*="--cols-default: 4"], [style*="--cols-sm: 4"], [style*="--cols-md: 4"], [style*="--cols-lg: 4"] {
+        grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    }
+
+    /* 6. Prevent sections from breaking in half across two pages */
+    section {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+    }
+}
