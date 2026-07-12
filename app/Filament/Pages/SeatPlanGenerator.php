@@ -58,7 +58,7 @@ class SeatPlanGenerator extends Page implements HasForms
                     ->schema([
                         Grid::make([
                             'default' => 1,
-                            'md' => 5, // 🌟 Optimized layout allocation spread to accommodate max benches field
+                            'md' => 3, // 🌟 Adjusted display spread column layout count to match current fields count perfectly
                         ])->schema([
                             Select::make('academic_year_id')
                                 ->label('Academic Year')
@@ -77,19 +77,6 @@ class SeatPlanGenerator extends Page implements HasForms
                                         ->toArray();
                                 })
                                 ->searchable()
-                                ->required(),
-
-                            TextInput::make('room_number')
-                                ->label('Room Name / Number')
-                                ->placeholder('e.g., 101, Hall A')
-                                ->required(),
-
-                            // 🌟 MAXIMUM PHYSICAL CAPACITY CEILING LIMIT FIELD
-                            TextInput::make('max_benches')
-                                ->label('Max Benches in Room')
-                                ->numeric()
-                                ->minValue(1)
-                                ->placeholder('e.g., 15')
                                 ->required(),
 
                             Select::make('formation')
@@ -135,8 +122,11 @@ class SeatPlanGenerator extends Page implements HasForms
     {
         $this->validate();
         $inputs = $this->data;
-        $formationCount = (int) $inputs['formation'];
-        $maxBenchesAllowed = (int) $inputs['max_benches']; // Read physical boundary limit
+        $formationCount = (int) ($inputs['formation'] ?? 1);
+        
+        // 🌟 SAFETY FALLBACK ENTRIES
+        $roomNumber = $inputs['room_name'] ?? $inputs['room_number'] ?? 'Auto Allocated';
+        $maxBenchesAllowed = (int) ($inputs['max_benches'] ?? 999); 
 
         // 1. Fetch student queues ordered by roll number sequentially
         $slots = [];
@@ -164,14 +154,13 @@ class SeatPlanGenerator extends Page implements HasForms
         $generatedAllocation = [];
         $overflowDetected = false;
 
-        // Clear previous configurations for this specific room to prevent duplicated states
+        // 🌟 FIXED: Clears using the fallback room variable instead of calling the missing array key directly
         SeatPlan::where('exam_id', $inputs['exam_id'])
-            ->where('room_number', $inputs['room_number'])
+            ->where('room_number', $roomNumber)
             ->delete();
 
         // 2. Weave students across positions sequentially 
         for ($i = 0; $i < $maxCount; $i++) {
-            // 🛑 BOUNDARY PROTECTION GATEWAY: Terminate if loops exceed max capacity allocation bounds
             if ($benchIndex > $maxBenchesAllowed) {
                 $overflowDetected = true;
                 break;
@@ -186,11 +175,11 @@ class SeatPlanGenerator extends Page implements HasForms
                 if ($slotData) {
                     $hasDataThisRow = true;
                     
-                    // Commit structural data footprint into permanent database matrix
+                    // 🌟 FIXED: Saves database structure mapped cleanly via local fallback variable
                     SeatPlan::create([
                         'academic_year_id' => $inputs['academic_year_id'],
                         'exam_id' => $inputs['exam_id'],
-                        'room_number' => $inputs['room_number'],
+                        'room_number' => $roomNumber,
                         'bench_number' => $benchIndex,
                         'seat_position' => $position,
                         'student_id' => $slotData['user_id'],
@@ -217,10 +206,8 @@ class SeatPlanGenerator extends Page implements HasForms
 
         $this->previewSeats = $generatedAllocation;
         
-        // 🌟 DISPATCH REAL-TIME RENDERING RE-REFRESH HOOK TO VIEW LAYOUT STRIPS
         $this->dispatch('refreshComponent');
 
-        // Send appropriate warning or success notification to interface
         if ($overflowDetected) {
             \Filament\Notifications\Notification::make()
                 ->title('Room filled to capacity limit!')

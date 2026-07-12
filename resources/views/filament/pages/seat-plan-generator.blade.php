@@ -11,7 +11,7 @@
     @if(count($previewSeats) > 0)
         @php
             $examName = \App\Models\Exam::find($this->data['exam_id'])?->name ?? 'Examination';
-            $roomName = $this->data['room_number'];
+            $roomName = $this->data['room_name'] ?? $this->data['room_number'] ?? 'Auto Allocated';
         @endphp
 
         <div class="space-y-8 no-print-wrapper-container">
@@ -40,7 +40,7 @@
                     <table class="master-notice-table">
                         <thead>
                             <tr>
-                                <th style="width: 15%">Bench No.</th>
+                                <th class="print-hide-column" style="width: 15%">Bench No.</th>
                                 <th class="text-center">Seat Position 1</th>
                                 <th class="text-center">Seat Position 2</th>
                                 @if((int)$this->data['formation'] === 3)
@@ -51,7 +51,7 @@
                         <tbody>
                             @foreach($previewSeats as $benchNo => $seats)
                                 <tr>
-                                    <td class="font-bold font-mono text-center bg-slate-50 border-r-2 border-slate-300 bench-num-col" style="color:#000; vertical-align: middle;">
+                                    <td class="font-bold font-mono text-center bg-slate-50 border-r-2 border-slate-300 bench-num-col print-hide-column" style="color:#000; vertical-align: middle;">
                                         Bench {{ sprintf('%02d', $benchNo) }}
                                     </td>
                                     @for($p = 1; $p <= (int)$this->data['formation']; $p++)
@@ -149,6 +149,11 @@
 
         /* --- 🌟 COMPLETE OVERHAUL PRINT INJECTION RULES --- */
         @media print {
+            /* 🌟 ENFORCED REMOVAL OF BENCH NUMBER COLUMN ON PRINT LAYOUT */
+            .print-hide-column {
+                display: none !important;
+            }
+
             /* 1. Hide EVERY default Filament page block wrapper instantly */
             html, body, div, section, main, header, nav, aside {
                 visibility: hidden !important;
@@ -179,7 +184,6 @@
             table.master-notice-table { width: 100% !important; border-collapse: collapse !important; }
             table.master-notice-table th { background: #e2e8f0 !important; color: #000000 !important; border: 1.5px solid #000000 !important; font-weight: bold !important; visibility: visible !important; }
             table.master-notice-table td { background: #ffffff !important; color: #000000 !important; border: 1.5px solid #000000 !important; visibility: visible !important; }
-            .bench-num-col { background: #f8fafc !important; border-right: 2px solid #000000 !important; color: #000000 !important; font-weight: bold !important; }
             .c-badge { border: 1px solid #000000 !important; background: transparent !important; color: #000000 !important; }
             .vacant-text { color: #cbd5e1 !important; }
 
