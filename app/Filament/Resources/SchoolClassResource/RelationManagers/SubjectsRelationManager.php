@@ -25,6 +25,16 @@ class SubjectsRelationManager extends RelationManager
                     ->required()
                     ->label('Subject Code (e.g., 101)'),
 
+                // 🌟 NEW MULTI-SELECT DROPDOWN TO SHARE ACROSS CLASSES 🌟
+                Forms\Components\Select::make('schoolClasses')
+                    ->relationship('schoolClasses', 'name')
+                    ->multiple()
+                    ->preload()
+                    ->searchable()
+                    ->label('Also assign to these classes (Optional)')
+                    ->helperText('This subject will automatically be added to the current class. Select others (like Class 10) to share it.')
+                    ->columnSpanFull(),
+
                 // --- UPDATED COMBINE DROPDOWN WITH CODES ---
                 Forms\Components\Select::make('linked_subject_id')
                     ->label('Combine With (Partner Subject)')

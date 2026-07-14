@@ -77,7 +77,7 @@ class StudentResource extends Resource
                                         Forms\Components\DatePicker::make('dob')->label('Date of Birth')->displayFormat('d/m/Y'),
                                         Forms\Components\Select::make('gender')->options(['Male' => 'Male', 'Female' => 'Female', 'Other' => 'Other']),
                                         Forms\Components\Select::make('religion')->options(['Islam' => 'Islam', 'Hinduism' => 'Hinduism', 'Christianity' => 'Christianity', 'Buddhism' => 'Buddhism', 'Other' => 'Other']),
-                                        Forms\Components\Select::make('blood_group')->options(['A+' => 'A+', 'A-' => 'A-', 'B+' => 'B+', 'B-' => 'B-', 'O+' => 'O+', 'O-' => 'O-', 'AB+' => 'AB+', 'AB-' => 'AB-']),
+                                        Forms\Components\Select::make('blood_group')->options(['A+' => 'A-', 'B+' => 'B+', 'B-' => 'B-', 'O+' => 'O+', 'O-' => 'O-', 'AB+' => 'AB+', 'AB-' => 'AB-']),
                                         Forms\Components\TextInput::make('nationality')->default('Bangladeshi'),
                                         Forms\Components\TextInput::make('birth_reg_no')->label('Birth Reg. No'),
                                         Forms\Components\TextInput::make('student_mobile_no')->label('Student Mobile No')->tel(),
@@ -133,10 +133,79 @@ class StudentResource extends Resource
                                     ])->columns(3),
                             ]),
 
-                        // TAB 4: ACADEMIC HISTORY
-                        Forms\Components\Tabs\Tab::make('Academic History')
+                        // 🌟 TAB 4: ACADEMIC HISTORY & NEW PLACEMENT
+                        Forms\Components\Tabs\Tab::make('Academic Placement')
                             ->icon('heroicon-m-academic-cap')
                             ->schema([
+                                Forms\Components\Section::make('Current Class Placement (Required for New Schools / Admissions)')
+                                    ->description('Assign the student directly to a class so they show up in tabs and reports instantly.')
+                                    ->schema([
+                                        Forms\Components\Select::make('academic_year_id')
+                                            ->label('Academic Year')
+                                            ->options(\App\Models\AcademicYear::pluck('name', 'id'))
+                                            ->default(fn () => \App\Models\AcademicYear::latest()->value('id'))
+                                            ->required(fn (string $operation): bool => $operation === 'create')
+                                            ->dehydrated(false),
+                                            
+                                        Forms\Components\Select::make('school_class_id')
+                                            ->label('Class')
+                                            ->options(\App\Models\SchoolClass::pluck('name', 'id'))
+                                            ->required(fn (string $operation): bool => $operation === 'create')
+                                            ->live()
+                                            ->dehydrated(false),
+                                            
+                                        Forms\Components\Select::make('section_id')
+                                            ->label('Section')
+                                            ->options(function (Forms\Get $get) {
+                                                $classId = $get('school_class_id');
+                                                if (!$classId) return [];
+                                                // Safely querying by class_id
+                                                return \App\Models\Section::where('class_id', $classId)->pluck('name', 'id');
+                                            })
+                                            ->required(fn (string $operation): bool => $operation === 'create')
+                                            ->dehydrated(false),
+                                            
+                                        Forms\Components\TextInput::make('roll_number')
+                                            ->label('Roll Number')
+                                            ->numeric()
+                                            ->required(fn (string $operation): bool => $operation === 'create')
+                                            ->dehydrated(false),
+
+                                        // 🌟 ADDED: STUDY GROUP FIELD (Visible for senior classes)
+                                        Forms\Components\Select::make('study_group')
+                                            ->label('Study Group')
+                                            ->options([
+                                                'General' => 'General (Class 6-8)',
+                                                'Science' => 'Science',
+                                                'Arts/Humanities' => 'Arts/Humanities',
+                                                'Commerce' => 'Commerce',
+                                            ])
+                                            ->default('General')
+                                            ->required(fn (string $operation): bool => $operation === 'create')
+                                            ->live()
+                                            ->dehydrated(false),
+
+                                        // 🌟 ADDED: OPTIONAL 4th SUBJECT FIELD (Loads dynamically based on chosen class)
+                                        Forms\Components\Select::make('optional_subject_id')
+                                            ->label('4th / Optional Subject')
+                                            ->options(function (Forms\Get $get) {
+                                                $classId = $get('school_class_id');
+                                                if (!$classId) return [];
+
+                                                return \App\Models\Subject::whereHas('schoolClasses', function ($q) use ($classId) {
+                                                        $q->where('school_classes.id', $classId);
+                                                    })
+                                                    ->where(fn($q) => $q->where('subject_type', 'Optional')->orWhere('type', 'like', '%Optional%'))
+                                                    ->get()
+                                                    ->mapWithKeys(fn($sub) => [$sub->id => "{$sub->name} ({$sub->code})"]);
+                                            })
+                                            ->searchable()
+                                            ->nullable()
+                                            ->dehydrated(false),
+                                    ])
+                                    ->columns(3) // Fits fields cleanly
+                                    ->visible(fn (string $operation): bool => $operation === 'create'),
+
                                 Forms\Components\Section::make('Previous Academic Information')
                                     ->schema([
                                         Forms\Components\TextInput::make('previous_exam_name')->label('Exam Name'),
@@ -430,7 +499,20 @@ class StudentResource extends Resource
                             
                         Forms\Components\Select::make('section_id')
                             ->label('Filter by Section')
-                            ->options(\App\Models\Section::pluck('name', 'id')),
+                            ->options(function () {
+                                $options = [];
+                                
+                                // Query from SchoolClass since we know the 'sections' relation exists 🌟
+                                foreach (\App\Models\SchoolClass::with('sections')->get() as $schoolClass) {
+                                    foreach ($schoolClass->sections as $section) {
+                                        $options[$section->id] = "{$schoolClass->name} - {$section->name}";
+                                    }
+                                }
+                                
+                                return $options;
+                            })
+                            ->searchable()
+                            ->preload(),
                     ])
                     ->query(function (Builder $query, array $data): Builder {
                         return $query->when(
@@ -472,6 +554,7 @@ class StudentResource extends Resource
         return [
             'index' => Pages\ListStudents::route('/'),
             'edit' => Pages\EditStudent::route('/{record}/edit'),
+            'create' => Pages\CreateStudent::route('/create'), // Make sure you have this mapped!
         ];
     }
 }
