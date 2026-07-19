@@ -60,12 +60,8 @@ class EnrollmentResource extends Resource
 
                 Forms\Components\Select::make('study_group')
                     ->label('Study Group')
-                    ->options([
-                        'Science' => 'Science',
-                        'Arts/Humanities' => 'Arts/Humanities',
-                        'Commerce' => 'Commerce',
-                        'General' => 'General',
-                    ])
+                    // 🌟 FIXED: Pulls the exact names directly from your Study Groups database table
+                    ->options(\App\Models\StudyGroup::pluck('name', 'name'))
                     ->required()
                     ->live()
                     ->afterStateUpdated(fn (Forms\Set $set) => $set('optional_subject_id', null)),
@@ -194,83 +190,105 @@ class EnrollmentResource extends Resource
             ->recordAction(null)
             
             ->filters([
-                // 1. STANDARD NATIVE RELATIONSHIP SELECT FILTER
-                Tables\Filters\SelectFilter::make('school_class_id')
-                    ->relationship('schoolClass', 'name')
-                    ->label('Filter by Class')
-                    ->preload()
-                    ->searchable(), // Native SelectFilter provides structural isolation safely
+                // 🌟 REFACTORED COMPREHENSIVE DEPENDENT FILTER BLOCK 🌟
+                Tables\Filters\Filter::make('enrollment_filter')
+                    ->form([
+                        Forms\Components\Select::make('academic_year_id')
+                            ->label('Filter by Year')
+                            ->options(\App\Models\AcademicYear::pluck('name', 'id'))
+                            ->searchable()
+                            ->preload(),
 
-                Tables\Filters\SelectFilter::make('academic_year_id')
-                    ->relationship('academicYear', 'name')
-                    ->label('Filter by Year')
-                    ->searchable()
-                    ->preload(),
+                        Forms\Components\Select::make('school_class_id')
+                            ->label('Filter by Class')
+                            ->options(\App\Models\SchoolClass::pluck('name', 'id'))
+                            ->searchable()
+                            ->preload()
+                            ->live(), // <--- Triggers instant UI update for dependent section options!
 
-                // 2. 🌟 STRUCTURALLY CLEAN QUERY-BASED STUDY GROUP FILTER BLOCK 🌟
-                Tables\Filters\SelectFilter::make('study_group')
-                    ->label('Filter by Group')
-                    ->options([
-                        'Science' => 'Science',
-                        'Arts/Humanities' => 'Arts / Humanities',
-                        'Commerce' => 'Commerce',
+                        Forms\Components\Select::make('section_id')
+                            ->label('Filter by Section')
+                            ->options(function (Forms\Get $get) {
+                                $classId = $get('school_class_id');
+                                
+                                if (! $classId) {
+                                    return [];
+                                }
+                                
+                                // 🌟 FIXED: Use the model's native relationship to avoid column naming errors!
+                                return \App\Models\SchoolClass::find($classId)?->sections->pluck('name', 'id') ?? [];
+                            })
+                            ->searchable()
+                            ->preload(),
+
+                        Forms\Components\Select::make('study_group')
+                            ->label('Filter by Group')
+                            ->options([
+                                'Science' => 'Science',
+                                'Arts/Humanities' => 'Arts / Humanities',
+                                'Commerce' => 'Commerce',
+                                'General' => 'General',
+                            ]),
+
+                        Forms\Components\Select::make('exam_status')
+                            ->label('Filter by Exam Status')
+                            ->options([
+                                'passed' => 'Passed Students',
+                                'failed' => 'Failed Students',
+                            ]),
                     ])
-                    ->query(function (Builder $query, array $data) {
-                        // Apply the study group filtering query only if a group value has been picked
-                        return $query->when($data['value'] ?? null, fn($q, $group) => $q->where('study_group', $group));
+                    ->query(function (Builder $query, array $data): Builder {
+                        return $query
+                            ->when($data['academic_year_id'], fn($q, $id) => $q->where('academic_year_id', $id))
+                            ->when($data['school_class_id'], fn($q, $id) => $q->where('school_class_id', $id))
+                            ->when($data['section_id'], fn($q, $id) => $q->where('section_id', $id))
+                            ->when($data['study_group'], fn($q, $group) => $q->where('study_group', $group))
+                            ->when($data['exam_status'], function (Builder $q, $status) {
+                                if ($status === 'failed') {
+                                    $q->whereExists(function ($sub) {
+                                        $sub->select(DB::raw(1))
+                                            ->from('marks')
+                                            ->whereColumn('marks.student_id', 'enrollments.user_id')
+                                            ->whereColumn('marks.academic_year_id', 'enrollments.academic_year_id')
+                                            ->whereColumn('marks.school_class_id', 'enrollments.school_class_id')
+                                            ->where('marks.grade', 'F');
+                                    });
+                                } elseif ($status === 'passed') {
+                                    $q->whereExists(function ($sub) {
+                                        $sub->select(DB::raw(1))
+                                            ->from('marks')
+                                            ->whereColumn('marks.student_id', 'enrollments.user_id')
+                                            ->whereColumn('marks.academic_year_id', 'enrollments.academic_year_id')
+                                            ->whereColumn('marks.school_class_id', 'enrollments.school_class_id');
+                                    })->whereNotExists(function ($sub) {
+                                        $sub->select(DB::raw(1))
+                                            ->from('marks')
+                                            ->whereColumn('marks.student_id', 'enrollments.user_id')
+                                            ->whereColumn('marks.academic_year_id', 'enrollments.academic_year_id')
+                                            ->whereColumn('marks.school_class_id', 'enrollments.school_class_id')
+                                            ->where('marks.grade', 'F');
+                                    });
+                                }
+                            });
                     })
                     ->indicateUsing(function (array $data): array {
-                        if (blank($data['value'] ?? null)) return [];
-
-                        // 🛑 THE SECURITY VALVE: Fetch the active class context selected on the table
-                        // This allows the badge to display safely without using the form-level $get() state pipeline
-                        $requestFilters = request()->query('tableFilters', []);
-                        $classId = $requestFilters['school_class_id']['value'] ?? null;
-
-                        if (!$classId) return []; // Hide indicator if no class is selected yet
-
-                        $className = \App\Models\SchoolClass::find($classId)?->name;
-                        
-                        // Only show the filter indicator badge for senior streams (Class 9 or 10)
-                        if ($className && (str_contains($className, '9') || str_contains($className, '10'))) {
-                            return ["Group: {$data['value']}"];
+                        $indicators = [];
+                        if ($data['academic_year_id'] ?? null) {
+                            $indicators[] = 'Year: ' . \App\Models\AcademicYear::find($data['academic_year_id'])?->name;
                         }
-
-                        return []; // Silently ignore if it's a junior grade (Classes 6-8)
-                    }),
-
-                Tables\Filters\SelectFilter::make('exam_status')
-                    ->label('Filter by Exam Status')
-                    ->options([
-                        'passed' => 'Passed Students',
-                        'failed' => 'Failed Students',
-                    ])
-                    ->query(function (Builder $query, array $data) {
-                        if ($data['value'] === 'failed') {
-                            $query->whereExists(function ($query) {
-                                $query->select(DB::raw(1))
-                                    ->from('marks')
-                                    ->whereColumn('marks.student_id', 'enrollments.user_id')
-                                    ->whereColumn('marks.academic_year_id', 'enrollments.academic_year_id')
-                                    ->whereColumn('marks.school_class_id', 'enrollments.school_class_id')
-                                    ->where('marks.grade', 'F');
-                            });
-                        } elseif ($data['value'] === 'passed') {
-                            $query->whereExists(function ($query) {
-                                $query->select(DB::raw(1))
-                                    ->from('marks')
-                                    ->whereColumn('marks.student_id', 'enrollments.user_id')
-                                    ->whereColumn('marks.academic_year_id', 'enrollments.academic_year_id')
-                                    ->whereColumn('marks.school_class_id', 'enrollments.school_class_id');
-                            })->whereNotExists(function ($query) {
-                                $query->select(DB::raw(1))
-                                    ->from('marks')
-                                    ->whereColumn('marks.student_id', 'enrollments.user_id')
-                                    ->whereColumn('marks.academic_year_id', 'enrollments.academic_year_id')
-                                    ->whereColumn('marks.school_class_id', 'enrollments.school_class_id')
-                                    ->where('marks.grade', 'F');
-                            });
+                        if ($data['school_class_id'] ?? null) {
+                            $indicators[] = 'Class: ' . \App\Models\SchoolClass::find($data['school_class_id'])?->name;
                         }
+                        if ($data['section_id'] ?? null) {
+                            $indicators[] = 'Section: ' . \App\Models\Section::find($data['section_id'])?->name;
+                        }
+                        if ($data['study_group'] ?? null) {
+                            $indicators[] = 'Group: ' . $data['study_group'];
+                        }
+                        if ($data['exam_status'] ?? null) {
+                            $indicators[] = 'Exam Status: ' . ($data['exam_status'] === 'passed' ? 'Passed' : 'Failed');
+                        }
+                        return $indicators;
                     }),
             ])
 

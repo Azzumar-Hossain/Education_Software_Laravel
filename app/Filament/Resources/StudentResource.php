@@ -33,6 +33,11 @@ class StudentResource extends Resource
         return parent::getEloquentQuery()->where('type', 'student');
     }
 
+    public static function canCreate(): bool
+    {
+        return false;
+    }
+
     public static function form(Form $form): Form
     {
         return $form
@@ -296,41 +301,56 @@ class StudentResource extends Resource
                                 $classId = $enrollment->school_class_id;
                                 $studyGroupId = $enrollment->study_group_id;
                                 $optionalSubjectId = $enrollment->optional_subject_id;
+                                
+                                // 🌟 Grab the student's religion and make it lowercase for matching
+                                $studentReligion = strtolower($record->religion ?? '');
 
                                 // Fetch cleanly filtered subjects matching their stream choices
                                 $subjects = \App\Models\Subject::whereHas('schoolClasses', function ($q) use ($classId) {
                                         $q->where('school_classes.id', $classId);
                                     })
                                     ->where(function ($query) use ($studyGroupId, $optionalSubjectId) {
-                                        // 1. Core compulsory items (Global - Study group is blank)
                                         $query->whereNull('study_group_id')
-                                              ->where(fn($q) => $q->where('subject_type', 'Core')->orWhere('type', 'Core'))
-                                              
-                                        // 2. Global Elective choices ONLY if this specific student selected it
-                                              ->orWhere(function ($q) use ($optionalSubjectId) {
-                                                  $q->whereNull('study_group_id')
+                                            ->where(fn($q) => $q->where('subject_type', 'Core')->orWhere('type', 'Core'))
+                                            ->orWhere(function ($q) use ($optionalSubjectId) {
+                                                $q->whereNull('study_group_id')
                                                     ->where(fn($e) => $e->where('subject_type', 'Optional')->orWhere('type', 'Optional'))
                                                     ->where('id', $optionalSubjectId);
-                                              })
-                                              
-                                        // 3. Stream-locked papers (Science, Commerce, etc.) matching their group
-                                              ->orWhere(function ($q) use ($studyGroupId, $optionalSubjectId) {
-                                                  $q->where('study_group_id', $studyGroupId)
+                                            })
+                                            ->orWhere(function ($q) use ($studyGroupId, $optionalSubjectId) {
+                                                $q->where('study_group_id', $studyGroupId)
                                                     ->where(function ($subQ) use ($optionalSubjectId) {
                                                         $subQ->whereIn('subject_type', ['Group', 'Core'])
-                                                             ->orWhereIn('type', ['Group', 'Core'])
-                                                             ->orWhere('id', $optionalSubjectId);
+                                                            ->orWhereIn('type', ['Group', 'Core'])
+                                                            ->orWhere('id', $optionalSubjectId);
                                                     });
-                                              });
+                                            });
                                     })
                                     ->orderBy('code')
                                     ->get();
+
+                                // 🌟 THE RELIGION FILTER: Hide religious subjects that do not match the student
+                                $subjects = $subjects->filter(function ($subject) use ($studentReligion) {
+                                    $name = strtolower($subject->name);
+                                    
+                                    $isIslamic = \Illuminate\Support\Str::contains($name, ['islam', 'ইসলাম']);
+                                    $isHindu = \Illuminate\Support\Str::contains($name, ['hindu', 'হিন্দু']);
+                                    $isChristian = \Illuminate\Support\Str::contains($name, ['christian', 'খ্রিষ্ট', 'খ্রিস্ট']);
+                                    $isBuddhist = \Illuminate\Support\Str::contains($name, ['buddh', 'বৌদ্ধ']);
+
+                                    if ($isIslamic && $studentReligion !== 'islam') return false;
+                                    if ($isHindu && $studentReligion !== 'hinduism') return false;
+                                    if ($isChristian && $studentReligion !== 'christianity') return false;
+                                    if ($isBuddhist && $studentReligion !== 'buddhism') return false;
+
+                                    return true; // Keep the subject if it passed the checks
+                                });
 
                                 if ($subjects->isEmpty()) {
                                     return "<span class='text-gray-400'>No subjects mapped matching this stream's criteria.</span>";
                                 }
 
-                                // Build the clean visual layout block exactly matching image_fb2261.png style
+                                // Build the clean visual layout block
                                 return $subjects->map(function ($subject) use ($optionalSubjectId) {
                                     $is4thChoice = ($subject->id == $optionalSubjectId && ($subject->subject_type === 'Optional' || $subject->type === 'Optional' || str_contains(strtolower($subject->type), 'option')));
                                     

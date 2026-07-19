@@ -213,15 +213,22 @@ class AdmitStudent extends Page implements HasForms
         
         $user = User::create($userData);
 
-        // 2. Create the Enrollment
+        // 🌟 1.5 GRAB THE ACTUAL NAME OF THE STUDY GROUP
+        $studyGroupName = null;
+        if (!empty($data['study_group_id'])) {
+            $studyGroupName = StudyGroup::find($data['study_group_id'])?->name;
+        }
+
+        // 2. Create the Enrollment 
         $enrollment = Enrollment::create([
             'user_id' => $user->id,
             'academic_year_id' => $data['academic_year_id'],
             'school_class_id' => $data['school_class_id'],
-            'section_id' => $data['section_id'],
+            'section_id' => $data['section_id'] ?? null,
             'roll_number' => $data['roll_number'] ?? null,
-            'study_group_id' => $data['study_group_id'] ?? null,
+            'study_group' => $studyGroupName ?? 'General', // 🌟 FIXED: Saves the string name
             'optional_subject_id' => $data['optional_subject_id'] ?? null,
+            'status' => 'Active', // 🌟 ENSURE STATUS IS SET SO THEY SHOW IN TABLES
         ]);
 
         // 3. --- THE AUTOMATIC SUBJECT ASSIGNMENT MAGIC ---
@@ -248,7 +255,10 @@ class AdmitStudent extends Page implements HasForms
                 $subjectIdsToAssign[] = $data['optional_subject_id'];
             }
 
-            $enrollment->subjects()->attach(array_unique($subjectIdsToAssign));
+            // Only attach if there are subjects to attach
+            if (!empty($subjectIdsToAssign)) {
+                $enrollment->subjects()->attach(array_unique($subjectIdsToAssign));
+            }
         }
 
         Notification::make()

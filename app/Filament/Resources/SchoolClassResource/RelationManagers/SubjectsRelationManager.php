@@ -35,7 +35,7 @@ class SubjectsRelationManager extends RelationManager
                     ->helperText('This subject will automatically be added to the current class. Select others (like Class 10) to share it.')
                     ->columnSpanFull(),
 
-                // --- UPDATED COMBINE DROPDOWN WITH CODES ---
+                // --- UPDATED COMBINE DROPDOWN WITH CLEARER CODE FORMATTING ---
                 Forms\Components\Select::make('linked_subject_id')
                     ->label('Combine With (Partner Subject)')
                     ->options(function (?\App\Models\Subject $record) {
@@ -46,9 +46,9 @@ class SubjectsRelationManager extends RelationManager
                             $query->where('id', '!=', $record->id);
                         }
                         
-                        // Glue the name and code together: "Subject Name (Code)"
+                        // 🌟 FIXED: Formatted clearly to separate the name from the database code
                         return $query->get()->mapWithKeys(function ($subject) {
-                            return [$subject->id => "{$subject->name} ({$subject->code})"];
+                            return [$subject->id => "{$subject->name} — [Code: {$subject->code}]"];
                         });
                     })
                     ->searchable()
