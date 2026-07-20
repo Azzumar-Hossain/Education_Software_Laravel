@@ -7,6 +7,10 @@
 @php
     $settings = \App\Models\SiteSetting::first();
     
+    // 🌟 ADDED: Logic to determine if class is junior or senior
+    $className = strtolower($enrollment->schoolClass->name ?? '');
+    $has4thSubjectColumn = str_contains($className, '9') || str_contains($className, '10');
+    
     // 1. Helper functions
     $getGrade = function($perc) {
         if($perc >= 80) return 'A+';
@@ -38,11 +42,9 @@
         return ($highest !== null && $highest > 0) ? number_format($highest, 1) : '--';
     };
 
-    // Helper to clean subject names and format with code
+    // 🌟 FIXED: Just return the exact name from the database!
     $formatSubjectWithCode = function($subjectModel) {
-        $cleanName = trim(preg_replace('/\(.*?\)/u', '', $subjectModel->name));
-        $code = $subjectModel->code ?? 'N/A';
-        return "{$cleanName} ({$code})";
+        return $subjectModel->name; 
     };
 
     // --- 2. SINGLE TERM CUMULATIVE WEIGHTAGE ---
@@ -367,15 +369,13 @@
             vertical-align: middle;
             background: #fff;
         }
-
-        /* 🌟 FIXED SPECIFIC STRUCTURAL BOX CONTAINER MATRIX BORDERS */
         .summary-block-matrix {
             width: 100%;
             border-collapse: collapse;
             table-layout: fixed;
         }
         .summary-block-matrix td {
-            border: 1px solid #333 !important; /* Enforced solid dark borders */
+            border: 1px solid #333 !important; 
             padding: 5px 10px;
             font-size: 11.5px;
         }
@@ -504,7 +504,12 @@
           <th colspan="2">COMBINED</th>
           <th rowspan="2" style="width: 5%;">GP</th>
           <th rowspan="2" style="width: 6%;">Grade</th>
-          <th rowspan="2" style="width: 9%;">GPA(Without 4th Subject)</th>
+          
+          {{-- 🌟 DYNAMIC HEADER: Hides Without 4th Subject for Classes 6,7,8 --}}
+          @if($has4thSubjectColumn)
+            <th rowspan="2" style="width: 9%;">GPA(Without 4th Subject)</th>
+          @endif
+          
           <th rowspan="2" style="width: 6%;">GPA</th>
         </tr>
         <tr class="sub-header">
@@ -550,11 +555,14 @@
               <td rowspan="2" style="font-weight: bold;" class="highlight-green">{{ $group['combined_grade'] }}</td>
 
               @if(!$hasRenderedSideAggregateBlock)
-                <td rowspan="{{ $totalSubjectRowsCount + 1 }}" class="right-side-merged-cell highlight-blue" style="border-left: 1.5px solid #333;">
-                  {{ $gpaWithout4th }}
-                </td>
-                <td rowspan="{{ $totalSubjectRowsCount + 1 }}" class="right-pinned-gpa-cell right-side-merged-cell highlight-teal">
-                  {{ $gpaWith4th }}
+                {{-- 🌟 DYNAMIC DATA CELLS: Applies the correct GPA output --}}
+                @if($has4thSubjectColumn)
+                  <td rowspan="{{ $totalSubjectRowsCount + 1 }}" class="right-side-merged-cell highlight-blue" style="border-left: 1.5px solid #333;">
+                    {{ $gpaWithout4th }}
+                  </td>
+                @endif
+                <td rowspan="{{ $totalSubjectRowsCount + 1 }}" class="right-pinned-gpa-cell right-side-merged-cell highlight-teal" style="{{ !$has4thSubjectColumn ? 'border-left: 1.5px solid #333;' : '' }}">
+                  {{ $has4thSubjectColumn ? $gpaWith4th : $gpaWithout4th }}
                 </td>
                 @php $hasRenderedSideAggregateBlock = true; @endphp
               @endif
@@ -579,11 +587,14 @@
               <td style="font-weight: bold;" class="{{ $group['combined_grade'] === 'F' ? 'grade-f' : 'highlight-green' }}">{{ $group['combined_grade'] }}</td>
 
               @if(!$hasRenderedSideAggregateBlock)
-                <td rowspan="{{ $totalSubjectRowsCount + 1 }}" class="right-side-merged-cell highlight-blue" style="border-left: 1.5px solid #333;">
-                  {{ $gpaWithout4th }}
-                </td>
-                <td rowspan="{{ $totalSubjectRowsCount + 1 }}" class="right-pinned-gpa-cell right-side-merged-cell highlight-teal">
-                  {{ $gpaWith4th }}
+                {{-- 🌟 DYNAMIC DATA CELLS: Applies the correct GPA output --}}
+                @if($has4thSubjectColumn)
+                  <td rowspan="{{ $totalSubjectRowsCount + 1 }}" class="right-side-merged-cell highlight-blue" style="border-left: 1.5px solid #333;">
+                    {{ $gpaWithout4th }}
+                  </td>
+                @endif
+                <td rowspan="{{ $totalSubjectRowsCount + 1 }}" class="right-pinned-gpa-cell right-side-merged-cell highlight-teal" style="{{ !$has4thSubjectColumn ? 'border-left: 1.5px solid #333;' : '' }}">
+                  {{ $has4thSubjectColumn ? $gpaWith4th : $gpaWithout4th }}
                 </td>
                 @php $hasRenderedSideAggregateBlock = true; @endphp
               @endif

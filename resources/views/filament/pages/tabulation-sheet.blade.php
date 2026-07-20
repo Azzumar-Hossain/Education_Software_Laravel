@@ -55,7 +55,7 @@
                 <div class="gazette-school-details">
                     <h1 class="gazette-school-title">Harimohan Govt. High School</h1>
                     <h2 class="gazette-exam-title">
-                        {{ \App\Models\Exam::find($this->data['exam_id'])?->name ?? 'Academic' }} Exam: 
+                        Tabulation Sheet | {{ \App\Models\Exam::find($this->data['exam_id'])?->name ?? 'Academic' }} Exam: 
                         <span class="font-mono font-bold">{{ \App\Models\AcademicYear::find($this->data['academic_year_id'])?->name ?? '2026' }}</span>
                     </h2>
                     <div class="gazette-class-metadata">
@@ -71,15 +71,15 @@
             </div>
 
             <table class="gazette-tabulation-table">
-                <thead>
+                <thead class="bg-gray-50">
                     <tr>
                         <th style="width: 35px;">Sl</th>
                         <th style="width: 160px;" class="text-left">Name / ID / Roll</th>
                         
                         @foreach($subjects as $subject)
-                            <th style="width: 90px;">
-                                <div class="font-bold text-[11px]">{{ getShortSubjectLabel($subject->name) }}</div>
-                                <div class="text-[9px] text-gray-500 font-mono font-normal mt-0.5">{{ $subject->code }}</div>
+                            <th style="width: 90px; padding: 4px;">
+                                <!-- 🌟 FIXED: Displays full name with parenthesis code, removes extra code row -->
+                                <div class="font-bold text-[11px] leading-tight">{{ $subject->name }}</div>
                             </th>
                         @endforeach
                     </tr>

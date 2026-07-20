@@ -65,8 +65,9 @@
                         <th style="width: 160px;" class="text-left">Student Name</th>
                         <th style="width: 75px;">Student ID</th>
                         
+                        {{-- 🌟 FIXED: Displays exact name (with parenthesis code), no abbreviations --}}
                         @foreach($subjects as $subject)
-                            <th>{{ getShortSubjectLabel($subject->name) }}</th>
+                            <th style="padding: 4px; font-size: 10px;">{{ $subject->name }}</th>
                         @endforeach
                         
                         <th style="width: 55px;" class="bg-gray-100 font-bold">Total</th>
@@ -186,8 +187,12 @@
             background-color: #f1f5f9;
             color: #000000;
             font-weight: bold;
-            padding: 8px 2px;
+            padding: 4px 2px; /* Slightly reduced padding to give text more room */
             text-align: center;
+            /* 🌟 ADDED THESE THREE LINES: */
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            hyphens: auto;
         }
         .notice-board-table td {
             border: 1px solid #000000;

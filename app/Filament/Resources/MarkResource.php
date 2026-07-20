@@ -162,11 +162,8 @@ class MarkResource extends Resource
 
                             Forms\Components\Select::make('study_group')
                                 ->label('Study Group')
-                                ->options([
-                                    'Science' => 'Science',
-                                    'Arts/Humanities' => 'Arts / Humanities',
-                                    'Commerce' => 'Commerce',
-                                ])
+                                // 🌟 FIXED: Pulled directly from database so filters always match!
+                                ->options(\App\Models\StudyGroup::pluck('name', 'name'))
                                 ->nullable()
                                 ->live()
                                 ->afterStateUpdated(fn (Forms\Set $set) => $set('subject_id', null)),
@@ -349,7 +346,8 @@ class MarkResource extends Resource
                                 return $q->where('study_group', $groupName);
                             })
                             ->when(blank($data['study_group']), function ($q) {
-                                return $q->where(fn($sub) => $sub->whereNull('study_group')->orWhere('study_group', 'General'));
+                                // 🌟 FIXED: Use 'LIKE' to smartly catch variations like "General" and "General(06-08)" 🌟
+                                return $q->where(fn($sub) => $sub->whereNull('study_group')->orWhere('study_group', 'like', '%General%'));
                             })
                             ->when($data['section_id'], function ($q, $sectionId) {
                                 return $q->where('section_id', $sectionId);
@@ -374,7 +372,7 @@ class MarkResource extends Resource
 
                             $studentProfile = $enrollment->user;
                             $studentReligion = $studentProfile ? strtolower(trim($studentProfile->religion)) : '';
-                            $studentGroup = $enrollment->study_group ?? 'General'; // 🌟 Read the active stream group directly
+                            $studentGroup = $enrollment->study_group ?? 'General'; 
 
                             // 🕋 Religion Alignment Check
                             if (str_contains($subjectNameLower, 'islam') || str_contains($subjectNameLower, 'hindu') || str_contains($subjectNameLower, 'christian') || str_contains($subjectNameLower, 'buddhi')) {

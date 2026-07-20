@@ -102,7 +102,8 @@ class TabulationSheet extends Page implements HasForms
             ->where('academic_year_id', $inputs['academic_year_id'])
             ->when($inputs['section_id'], fn($q, $s) => $q->where('section_id', $s))
             ->when($groupName, fn($q, $g) => $q->where('study_group', $g))
-            ->orderBy('roll_number', 'asc')
+            // 🌟 FIXED: Cast roll_number as an unsigned integer for perfect numeric sorting
+            ->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')
             ->get();
     }
 }
