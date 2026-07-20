@@ -60,7 +60,6 @@ class EnrollmentResource extends Resource
 
                 Forms\Components\Select::make('study_group')
                     ->label('Study Group')
-                    // 🌟 FIXED: Pulls the exact names directly from your Study Groups database table
                     ->options(\App\Models\StudyGroup::pluck('name', 'name'))
                     ->required()
                     ->live()
@@ -92,6 +91,19 @@ class EnrollmentResource extends Resource
                     ->preload()
                     ->nullable()
                     ->helperText('Select the 4th subject matching this student group stream.'),
+
+                // 🌟 ADDED: STATUS DROPDOWN FOR MANUAL EDITING 🌟
+                Forms\Components\Select::make('status')
+                    ->label('Enrollment Status')
+                    ->options([
+                        'Active' => 'Active',
+                        'Passed' => 'Passed',
+                        'Failed' => 'Failed',
+                        'Inactive' => 'Inactive (Transferred / Left)',
+                        'Suspended' => 'Suspended',
+                    ])
+                    ->default('Active')
+                    ->required(),
             ]);
     }
 
@@ -134,7 +146,9 @@ class EnrollmentResource extends Resource
                 Tables\Columns\TextColumn::make('roll_number')
                     ->label('Roll Number')
                     ->searchable()
-                    ->sortable(),
+                    ->sortable(query: function (\Illuminate\Database\Eloquent\Builder $query, string $direction) {
+                        return $query->orderByRaw('CAST(roll_number AS UNSIGNED) ' . $direction);
+                    }),
 
                 Tables\Columns\TextColumn::make('status')
                     ->label('Status')
@@ -190,7 +204,6 @@ class EnrollmentResource extends Resource
             ->recordAction(null)
             
             ->filters([
-                // 🌟 REFACTORED COMPREHENSIVE DEPENDENT FILTER BLOCK 🌟
                 Tables\Filters\Filter::make('enrollment_filter')
                     ->form([
                         Forms\Components\Select::make('academic_year_id')
@@ -204,7 +217,7 @@ class EnrollmentResource extends Resource
                             ->options(\App\Models\SchoolClass::pluck('name', 'id'))
                             ->searchable()
                             ->preload()
-                            ->live(), // <--- Triggers instant UI update for dependent section options!
+                            ->live(),
 
                         Forms\Components\Select::make('section_id')
                             ->label('Filter by Section')
@@ -215,7 +228,6 @@ class EnrollmentResource extends Resource
                                     return [];
                                 }
                                 
-                                // 🌟 FIXED: Use the model's native relationship to avoid column naming errors!
                                 return \App\Models\SchoolClass::find($classId)?->sections->pluck('name', 'id') ?? [];
                             })
                             ->searchable()
@@ -470,6 +482,25 @@ class EnrollmentResource extends Resource
             ])
 
             ->actions([
+                // 🌟 ADDED: TRANSFER STUDENT QUICK ACTION 🌟
+                Tables\Actions\Action::make('transfer_student')
+                    ->label('Transfer')
+                    ->icon('heroicon-o-archive-box-arrow-down')
+                    ->color('danger')
+                    ->requiresConfirmation()
+                    ->modalHeading('Transfer / Deactivate Student')
+                    ->modalDescription('Are you sure you want to mark this student as Inactive? They will be hidden from the main active enrollment lists but their history will be saved.')
+                    ->action(function (Enrollment $record) {
+                        $record->update(['status' => 'Inactive']);
+                        
+                        \Filament\Notifications\Notification::make()
+                            ->title('Student Transferred')
+                            ->body('The student has been marked as Inactive successfully.')
+                            ->success()
+                            ->send();
+                    })
+                    ->hidden(fn (Enrollment $record) => $record->status === 'Inactive'),
+
                 Tables\Actions\Action::make('view_profile')
                     ->label('Profile')
                     ->icon('heroicon-o-user')
@@ -671,7 +702,9 @@ class EnrollmentResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        $query = parent::getEloquentQuery();
+        // 🌟 ADDED: GLOBALLY HIDE ALL INACTIVE/TRANSFERRED STUDENTS 🌟
+        $query = parent::getEloquentQuery()->where('status', '!=', 'Inactive');
+        
         $user = auth()->user();
 
         if ($user->type === 'teacher') {
