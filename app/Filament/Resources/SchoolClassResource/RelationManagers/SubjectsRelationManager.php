@@ -25,7 +25,7 @@ class SubjectsRelationManager extends RelationManager
                     ->required()
                     ->label('Subject Code (e.g., 101)'),
 
-                // 🌟 NEW MULTI-SELECT DROPDOWN TO SHARE ACROSS CLASSES 🌟
+                // 🌟 MULTI-SELECT DROPDOWN TO SHARE ACROSS CLASSES 🌟
                 Forms\Components\Select::make('schoolClasses')
                     ->relationship('schoolClasses', 'name')
                     ->multiple()
@@ -35,18 +35,16 @@ class SubjectsRelationManager extends RelationManager
                     ->helperText('This subject will automatically be added to the current class. Select others (like Class 10) to share it.')
                     ->columnSpanFull(),
 
-                // --- UPDATED COMBINE DROPDOWN WITH CLEARER CODE FORMATTING ---
+                // --- COMBINE DROPDOWN ---
                 Forms\Components\Select::make('linked_subject_id')
                     ->label('Combine With (Partner Subject)')
                     ->options(function (?\App\Models\Subject $record) {
                         $query = \App\Models\Subject::query();
                         
-                        // If we are editing an existing subject, hide it from its own dropdown!
                         if ($record) {
                             $query->where('id', '!=', $record->id);
                         }
                         
-                        // 🌟 FIXED: Formatted clearly to separate the name from the database code
                         return $query->get()->mapWithKeys(function ($subject) {
                             return [$subject->id => "{$subject->name} — [Code: {$subject->code}]"];
                         });
@@ -56,11 +54,11 @@ class SubjectsRelationManager extends RelationManager
                     ->helperText('Merging? Select the 2nd paper here. They will act as one for grade calculations.')
                     ->columnSpanFull(),
                     
-                // --- FIXED STUDY GROUP FIELD: CHANGED FROM required() TO nullable() ---
+                // --- STUDY GROUP FIELD ---
                 Forms\Components\Select::make('study_group_id')
                     ->label('Study Group')
                     ->relationship('studyGroup', 'name')
-                    ->nullable() // <--- Allow blank for multi-group / global subjects
+                    ->nullable()
                     ->preload()
                     ->createOptionForm([
                         Forms\Components\TextInput::make('name')->required(),
@@ -89,9 +87,25 @@ class SubjectsRelationManager extends RelationManager
                         
                         Forms\Components\TextInput::make('practical_total')->label('Practical Total (0 if none)')->numeric()->default(0),
                         Forms\Components\TextInput::make('practical_pass_mark')->label('Practical Pass (0 if none)')->numeric()->default(0),
+
+                        // 🌟 ADDED: COMBINED PASS VS INDIVIDUAL COMPONENT PASS TOGGLE 🌟
+                        Forms\Components\Toggle::make('overall_pass_only')
+                            ->label('Overall Pass Rule (Combined Total)')
+                            ->helperText('If enabled, student passes as long as Total Marks >= Pass Mark (e.g., 33/100 or 17/50), ignoring separate Written/MCQ limits.')
+                            ->formatStateUsing(fn ($state): bool => (bool) $state) // 🌟 Force explicit boolean conversion on load
+                            ->default(false)
+                            ->live()
+                            ->columnSpanFull(),
+
+                        Forms\Components\TextInput::make('overall_pass_mark')
+                            ->label('Overall Total Pass Mark')
+                            ->numeric()
+                            ->default(33)
+                            ->visible(fn (Forms\Get $get) => (bool) $get('overall_pass_only'))
+                            ->columnSpanFull(),
                     ])->columns(2),
 
-                // --- NEW OVERRIDE REPEATER (FOR EXAMS LIKE 1ST MID) ---
+                // --- OVERRIDE REPEATER (FOR EXAMS LIKE 1ST MID) ---
                 Forms\Components\Repeater::make('exam_overrides')
                     ->label('Custom Exam Rules (Overrides)')
                     ->helperText('Does a specific exam have different total marks (like a 50-mark 1st Mid)? Add it here. Otherwise, it uses the default distribution above.')
@@ -139,7 +153,6 @@ class SubjectsRelationManager extends RelationManager
                 Tables\Columns\TextColumn::make('name')->label('Subject Name'),
                 Tables\Columns\TextColumn::make('code')->label('Subject Code'),
                 
-                // --- SHOW THE PARTNER IN THE TABLE ---
                 Tables\Columns\TextColumn::make('linkedSubject.name')
                     ->label('Partner Subject')
                     ->badge()
@@ -154,16 +167,15 @@ class SubjectsRelationManager extends RelationManager
                     ->badge()
                     ->color('gray'),
                 Tables\Columns\TextColumn::make('practical_total')
-                ->label('Practical Max')
-                ->badge()
-                ->color('gray'),
+                    ->label('Practical Max')
+                    ->badge()
+                    ->color('gray'),
             ])
             ->filters([
                 //
             ])
             ->headerActions([
                 Tables\Actions\CreateAction::make(),
-                //Tables\Actions\AttachAction::make()->preloadRecordSelect(), 
             ])
             ->actions([
                 Tables\Actions\EditAction::make(),

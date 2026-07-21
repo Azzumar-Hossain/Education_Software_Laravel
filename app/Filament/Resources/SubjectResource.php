@@ -49,10 +49,6 @@ class SubjectResource extends Resource
                             ->helperText('Merging? Select the 2nd paper here.')
                             ->columnSpanFull(),
 
-                        Forms\Components\TextInput::make('test_field')
-                            ->label('TEST FIELD - CAN YOU SEE THIS?')
-                            ->default('If you see this, the file updated!'),
-
                         Forms\Components\Select::make('study_group_id')
                             ->label('Study Group')
                             ->relationship('studyGroup', 'name')
@@ -87,6 +83,21 @@ class SubjectResource extends Resource
 
                         Forms\Components\TextInput::make('practical_total')->label('Practical Total (0 if none)')->numeric()->default(0),
                         Forms\Components\TextInput::make('practical_pass_mark')->label('Practical Pass (0 if none)')->numeric()->default(0),
+
+                        // 🌟 ADDED: OVERALL PASS RULE TOGGLE AND THRESHOLD INPUT 🌟
+                        Forms\Components\Toggle::make('overall_pass_only')
+                            ->label('Overall Pass Rule (Combined Total)')
+                            ->helperText('If enabled, student passes as long as Total Marks >= Pass Mark (e.g., 33/100 or 17/50), ignoring separate Written/MCQ limits.')
+                            ->default(false)
+                            ->live()
+                            ->columnSpanFull(),
+
+                        Forms\Components\TextInput::make('overall_pass_mark')
+                            ->label('Overall Total Pass Mark')
+                            ->numeric()
+                            ->default(33)
+                            ->visible(fn (Forms\Get $get) => (bool) $get('overall_pass_only'))
+                            ->columnSpanFull(),
                     ])->columns(2),
 
                 Forms\Components\Repeater::make('exam_overrides')
@@ -152,7 +163,7 @@ class SubjectResource extends Resource
             ->filters([
                 SelectFilter::make('school_class_id')
                     ->label('Filter by Class')
-                    ->relationship('schoolClasses', 'name') // Formatted to match multi-class relationship mappings
+                    ->relationship('schoolClasses', 'name')
                     ->searchable()
                     ->preload()
                     ->multiple(),
@@ -177,7 +188,6 @@ class SubjectResource extends Resource
     {
         return [
             'index' => Pages\ListSubjects::route('/'),
-            //'create' => Pages\CreateSubject::route('/create'),
             'edit' => Pages\EditSubject::route('/{record}/edit'),
         ];
     }

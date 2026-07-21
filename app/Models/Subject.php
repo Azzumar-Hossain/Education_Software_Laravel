@@ -23,10 +23,14 @@ class Subject extends Model
         'mcq_pass_mark',
         'practical_total',
         'practical_pass_mark',
+        'overall_pass_only',  // 🌟 Make sure this is fillable
+        'overall_pass_mark',  // 🌟 Make sure this is fillable
         'exam_overrides',
     ];
 
     protected $casts = [
+        'overall_pass_only' => 'boolean',
+        'overall_pass_mark' => 'integer',
         'exam_overrides' => 'array', // Tells Laravel this is a JSON array
     ];
 

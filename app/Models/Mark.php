@@ -27,9 +27,13 @@ class Mark extends Model
             
             $mark->marks_obtained = $written + $mcq + $practical;
 
-            // 2. Resolve the total maximum achievable marks for this specific subject/exam assignment
+            // 2. Resolve subject configuration and pass limits
             $subject = $mark->subject;
             $totalPossibleMarks = 100; // Default baseline fallback
+
+            $writtenPass   = $subject->written_pass_mark ?? 33;
+            $mcqPass       = $subject->mcq_pass_mark ?? 0;
+            $practicalPass = $subject->practical_pass_mark ?? 0;
 
             if ($subject && method_exists($subject, 'getMarksForExam')) {
                 $examSettings = $subject->getMarksForExam($mark->exam_id);
@@ -41,17 +45,48 @@ class Mark extends Model
                 if ($combinedMax > 0) {
                     $totalPossibleMarks = $combinedMax;
                 }
+
+                // If pass mark overrides exist in custom exam settings, use them
+                if (isset($examSettings['written_pass_mark']))   $writtenPass   = $examSettings['written_pass_mark'];
+                if (isset($examSettings['mcq_pass_mark']))       $mcqPass       = $examSettings['mcq_pass_mark'];
+                if (isset($examSettings['practical_pass_mark'])) $practicalPass = $examSettings['practical_pass_mark'];
             }
 
-            // 3. Compute percentage value matching grade configuration rules
-            $percentageObtained = ($mark->marks_obtained / $totalPossibleMarks) * 100;
+            // 🌟 3. EVALUATE PASS / FAIL STATUS 🌟
+            $isPassed = true;
 
-            // 4. Run the user-friendly custom database scale matcher
-            $gradeDetails = \App\Models\GradeScale::getGradeForMark($percentageObtained);
+            if ($subject && $subject->overall_pass_only) {
+                // Combined Rule: Student passes if total marks >= overall pass mark
+                $overallPassMark = $subject->overall_pass_mark ?? 33;
+                $isPassed = ($mark->marks_obtained >= $overallPassMark);
+            } else {
+                // Strict Individual Rule: Check each paper component
+                if ($written < $writtenPass) {
+                    $isPassed = false;
+                }
+                if ($mcq < $mcqPass) {
+                    $isPassed = false;
+                }
+                if ($practical < $practicalPass) {
+                    $isPassed = false;
+                }
+            }
 
-            // 5. Commit calculated properties to the object pipeline
-            $mark->grade = $gradeDetails['grade'];
-            $mark->gpa   = $gradeDetails['point'];
+            // 4. Compute grade based on Pass/Fail outcome
+            if (!$isPassed) {
+                $mark->grade = 'F';
+                $mark->gpa   = 0.00;
+            } else {
+                // Compute percentage value matching grade configuration rules
+                $percentageObtained = ($mark->marks_obtained / $totalPossibleMarks) * 100;
+
+                // Run the user-friendly custom database scale matcher
+                $gradeDetails = \App\Models\GradeScale::getGradeForMark($percentageObtained);
+
+                // Commit calculated properties to the object pipeline
+                $mark->grade = $gradeDetails['grade'];
+                $mark->gpa   = $gradeDetails['point'];
+            }
         });
     }
 
