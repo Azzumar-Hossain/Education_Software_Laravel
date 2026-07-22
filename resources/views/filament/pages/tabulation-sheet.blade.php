@@ -188,18 +188,19 @@
                                 @else
                                     <td class="px-1.5 py-1 text-left font-mono text-[10px] font-bold leading-snug bg-white dark:bg-gray-900 text-black dark:text-white">
                                         @if($subject->written_total > 0)
-                                            <div>W : {{ $mark ? (int)$mark->written_mark : 0 }}</div>
+                                            <div>Writ: {{ $mark ? (int)$mark->written_mark : 0 }}</div>
                                         @endif
                                         @if($subject->mcq_total > 0)
-                                            <div>M : {{ $mark ? (int)$mark->mcq_mark : 0 }}</div>
+                                            <div>MCQ: {{ $mark ? (int)$mark->mcq_mark : 0 }}</div>
                                         @endif
                                         @if($subject->practical_total > 0)
-                                            <div>P : {{ $mark ? (int)$mark->practical_mark : 0 }}</div>
+                                            <div>Prac: {{ $mark ? (int)$mark->practical_mark : 0 }}</div>
                                         @endif
                                         <div class="font-extrabold border-t border-black mt-0.5 pt-0.5">Tot: {{ $mark ? (int)$mark->marks_obtained : 0 }}</div>
-                                        <div>GP : {{ $mark ? number_format($mark->gpa, 2) : '0.00' }}</div>
+                                        
+                                        <!-- 🌟 COMBINED GP AND GRADE IN ONE LINE 🌟 -->
                                         <div class="{{ $mark && $mark->grade === 'F' ? 'text-danger-600 font-extrabold' : 'font-extrabold' }}">
-                                            Grd: {{ $mark ? $mark->grade : 'F' }}
+                                            GP: {{ $mark ? number_format($mark->gpa, 2) : '0.00' }}/{{ $mark ? $mark->grade : 'F' }}
                                         </div>
                                     </td>
                                 @endif
