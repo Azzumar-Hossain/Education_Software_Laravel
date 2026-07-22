@@ -33,7 +33,9 @@ class TabulationSheet extends Page implements HasForms
 
     public function mount(): void
     {
-        $this->form->fill();
+        $this->form->fill([
+            'rows_per_page' => 7, // Set default fallback
+        ]);
     }
 
     public function form(Form $form): Form
@@ -45,25 +47,29 @@ class TabulationSheet extends Page implements HasForms
                     ->schema([
                         Grid::make([
                             'default' => 1,
-                            'md' => 5,
+                            'md' => 6, // 🌟 Adjusted grid to 6 columns for clean horizontal alignment
                         ])->schema([
                             Select::make('academic_year_id')
                                 ->label('Year')
                                 ->options(AcademicYear::pluck('name', 'id'))
                                 ->required(),
+
                             Select::make('school_class_id')
                                 ->label('Class')
                                 ->options(SchoolClass::pluck('name', 'id'))
                                 ->required()
                                 ->live(),
+
                             Select::make('exam_id')
                                 ->label('Exam')
                                 ->options(fn($get) => $get('school_class_id') ? Exam::where('school_class_id', $get('school_class_id'))->pluck('name', 'id') : [])
                                 ->required(),
+
                             Select::make('section_id')
                                 ->label('Section')
                                 ->options(fn($get) => $get('school_class_id') ? Section::whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $get('school_class_id')))->pluck('name', 'id') : [])
                                 ->nullable(),
+
                             Select::make('study_group')
                                 ->label('Study Group')
                                 ->options([
@@ -72,6 +78,20 @@ class TabulationSheet extends Page implements HasForms
                                     'Commerce' => 'Commerce',
                                     'General' => 'General',
                                 ])->nullable(),
+
+                            // 🌟 DYNAMIC USER-SELECTABLE ROWS PER PAGE DROPDOWN 🌟
+                            //Select::make('rows_per_page')
+                            //    ->label('Rows / Page')
+                            //    ->options([
+                            //        '5'  => '5 Rows / Page',
+                            //        '6'  => '6 Rows / Page',
+                            //        '7'  => '7 Rows / Page (Recommended)',
+                            //        '8'  => '8 Rows / Page',
+                            //        '10' => '10 Rows / Page',
+                            //        '12' => '12 Rows / Page',
+                            //    ])
+                            //    ->default(7)
+                            //    ->required(),
                         ]),
                     ]),
             ]);
@@ -102,7 +122,7 @@ class TabulationSheet extends Page implements HasForms
             ->where('academic_year_id', $inputs['academic_year_id'])
             ->when($inputs['section_id'], fn($q, $s) => $q->where('section_id', $s))
             ->when($groupName, fn($q, $g) => $q->where('study_group', $g))
-            // 🌟 FIXED: Cast roll_number as an unsigned integer for perfect numeric sorting
+            // Cast roll_number as an unsigned integer for perfect numeric sorting
             ->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')
             ->get();
     }
