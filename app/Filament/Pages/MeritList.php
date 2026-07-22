@@ -7,6 +7,7 @@ use App\Models\SchoolClass;
 use App\Models\Section;
 use App\Models\Enrollment;
 use App\Models\Mark;
+use App\Models\GradeScale;
 use Filament\Pages\Page;
 use Filament\Forms\Form;
 use Filament\Forms\Components\Select;
@@ -33,7 +34,6 @@ class MeritList extends Page implements HasForms
         $this->form->fill();
     }
 
-    // 🌟 ADDED RESET ACTIONS TO THE TOP RIGHT OF THE CORNER PANEL
     protected function getHeaderActions(): array
     {
         return [
@@ -140,63 +140,80 @@ class MeritList extends Page implements HasForms
         $enrollments = $query->get();
         $calculatedRankings = [];
 
-        // 🌟 Pull the custom letter grades flagged as failing items from the database matrix
-        $failingGrades = \App\Models\GradeScale::where('is_fail_grade', true)
+        // 🌟 Pull fail grades defined in settings
+        $failingGrades = GradeScale::where('is_fail_grade', true)
             ->pluck('letter_grade')
             ->toArray();
 
-        // Safe fallback default if the settings matrix table is empty
         if (empty($failingGrades)) {
             $failingGrades = ['F'];
         }
 
         foreach ($enrollments as $enrollment) {
-            $marksQuery = Mark::where('student_id', $enrollment->user_id)
+            // Query marks directly associated with the student and academic context
+            $studentMarks = Mark::where('student_id', $enrollment->user_id)
                 ->where('academic_year_id', $inputs['academic_year_id'])
-                ->where('school_class_id', $inputs['school_class_id']);
+                ->where('school_class_id', $inputs['school_class_id'])
+                ->get();
 
-            $totalMarks = $marksQuery->sum('marks_obtained');
-            $avgGpa     = $marksQuery->avg('gpa') ?? 0.00;
-            
-            // 🌟 FIXED: Evaluates student failure based on your custom database rules array
-            $hasFailed  = $marksQuery->whereIn('grade', $failingGrades)->exists();
+            if ($studentMarks->isEmpty()) {
+                continue; // No marks entered yet
+            }
+
+            // 🌟 Check if student failed in any subject
+            $hasFailed = $studentMarks->contains(function ($mark) use ($failingGrades) {
+                return in_array($mark->grade, $failingGrades);
+            });
+
+            // Exclude failed students completely from Merit Standings List
+            if ($hasFailed) {
+                continue;
+            }
+
+            // Calculate aggregate marks and exact GPA average across taken subjects
+            $totalMarks   = $studentMarks->sum('marks_obtained');
+            $subjectCount = $studentMarks->count();
+            $gpaSum       = $studentMarks->sum('gpa');
+            $avgGpa       = $subjectCount > 0 ? ($gpaSum / $subjectCount) : 0.00;
 
             $calculatedRankings[] = [
-                'student_id'   => $enrollment->user->student_id,
+                'student_id'   => $enrollment->user->student_id ?? $enrollment->user->id,
                 'student_name' => $enrollment->user->name,
                 'roll_number'  => $enrollment->roll_number,
                 'section_name' => $enrollment->section->name ?? 'N/A',
                 'group_name'   => $enrollment->study_group ?? 'General',
                 'total_marks'  => $totalMarks,
-                'final_gpa'    => $hasFailed ? 0.00 : number_format($avgGpa, 2),
-                'final_grade'  => $hasFailed ? ($failingGrades[0] ?? 'F') : $this->calculateGradeFromGpa($avgGpa),
-                'is_failed'    => $hasFailed,
+                'final_gpa'    => number_format($avgGpa, 2),
+                'final_grade'  => $this->getGradeLetterFromGpa($avgGpa),
+                'is_failed'    => false,
             ];
         }
 
+        // 🌟 RANK PASSED STUDENTS BY GPA (DESC), THEN TOTAL MARKS (DESC)
         usort($calculatedRankings, function ($a, $b) {
-            if ($a['is_failed'] !== $b['is_failed']) {
-                return $a['is_failed'] <=> $b['is_failed'];
+            if ((float)$b['final_gpa'] !== (float)$a['final_gpa']) {
+                return (float)$b['final_gpa'] <=> (float)$a['final_gpa'];
             }
-            if ($b['final_gpa'] != $a['final_gpa']) {
-                return $b['final_gpa'] <=> $a['final_gpa'];
-            }
-            return $b['total_marks'] <=> $a['total_marks'];
+            return (float)$b['total_marks'] <=> (float)$a['total_marks'];
         });
 
         $this->meritRecords = $calculatedRankings;
     }
 
-    // REPLACE THIS AT THE BOTTOM OF app/Filament/Pages/MeritList.php
-    private function calculateGradeFromGpa($gpa): string
+    /**
+     * Maps calculated GPA directly to official grade letters (A+, A, A-, B, C, D)
+     */
+    private function getGradeLetterFromGpa($gpa): string
     {
-        // Convert GPA back to a percentage base to compare against your Grade Scales
-        $percentageScalar = $gpa * 20;
+        $gpaFloat = (float) $gpa;
 
-        $scaleMatch = \App\Models\GradeScale::where('min_mark', '<=', $percentageScalar)
-            ->where('max_mark', '>=', $percentageScalar)
-            ->first();
+        if ($gpaFloat >= 5.00) return 'A+';
+        if ($gpaFloat >= 4.00) return 'A';
+        if ($gpaFloat >= 3.50) return 'A-';
+        if ($gpaFloat >= 3.00) return 'B';
+        if ($gpaFloat >= 2.00) return 'C';
+        if ($gpaFloat >= 1.00) return 'D';
 
-        return $scaleMatch ? $scaleMatch->letter_grade : 'F';
+        return 'F';
     }
 }

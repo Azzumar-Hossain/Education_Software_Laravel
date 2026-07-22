@@ -7,10 +7,12 @@ use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Pages\Page;
 use Filament\Notifications\Notification;
+use Livewire\WithFileUploads;
 
 class ManageSiteSettings extends Page implements Forms\Contracts\HasForms
 {
     use Forms\Concerns\InteractsWithForms;
+    use WithFileUploads; // 🌟 Enables direct Livewire upload properties
 
     protected static ?string $navigationIcon = 'heroicon-o-cog-6-tooth';
     protected static ?string $navigationGroup = 'Settings';
@@ -18,10 +20,10 @@ class ManageSiteSettings extends Page implements Forms\Contracts\HasForms
     protected static string $view = 'filament.pages.manage-site-settings';
 
     public ?array $data = [];
+    public $newLogo; // Temporary holder for user uploaded file via custom button
 
     public function mount(): void
     {
-        // Fetch the first setting row, or create an empty one
         $setting = SiteSetting::first();
         if ($setting) {
             $this->form->fill($setting->toArray());
@@ -53,11 +55,10 @@ class ManageSiteSettings extends Page implements Forms\Contracts\HasForms
 
                 Forms\Components\Section::make('Branding')
                     ->schema([
-                        Forms\Components\FileUpload::make('logo')
+                        // 🌟 Custom View Component with a Dedicated Upload Button
+                        Forms\Components\ViewField::make('logo')
                             ->label('School Logo')
-                            ->image()
-                            ->directory('settings')
-                            ->preserveFilenames(),
+                            ->view('filament.forms.components.custom-logo-uploader'),
                     ]),
             ])
             ->statePath('data');
@@ -66,6 +67,13 @@ class ManageSiteSettings extends Page implements Forms\Contracts\HasForms
     public function save(): void
     {
         $data = $this->form->getState();
+        
+        // 🌟 If user clicked upload and chose a new image file
+        if ($this->newLogo) {
+            $path = $this->newLogo->store('settings', 'public');
+            $data['logo'] = $path;
+        }
+
         $setting = SiteSetting::first();
 
         if ($setting) {
@@ -73,6 +81,9 @@ class ManageSiteSettings extends Page implements Forms\Contracts\HasForms
         } else {
             SiteSetting::create($data);
         }
+
+        // Reset temporary uploaded file
+        $this->newLogo = null;
 
         Notification::make()
             ->success()

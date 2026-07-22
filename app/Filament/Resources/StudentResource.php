@@ -14,6 +14,7 @@ use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Filament\Infolists;
 use Filament\Infolists\Infolist;
+use Filament\Forms\Components\ViewField;
 
 class StudentResource extends Resource
 {
@@ -50,13 +51,14 @@ class StudentResource extends Resource
                             ->schema([
                                 Forms\Components\Section::make('System Account')
                                     ->schema([
-                                        Forms\Components\FileUpload::make('avatar')
-                                            ->image()
-                                            ->avatar() 
-                                            ->directory('student-avatars')
+                                        Forms\Components\ViewField::make('avatar')
+                                            //->image()
+                                            //->avatar() 
+                                            //->directory('student-avatars')
                                             ->label('Student Photo')
-                                            ->columnSpanFull() 
-                                            ->alignCenter(),
+                                            ->view('filament.forms.components.custom-student-photo-uploader')
+                                            ->columnSpanFull(), 
+                                            //->alignCenter(),
 
                                         Forms\Components\TextInput::make('name')->required()->label('Full Name (English)'),
                                         Forms\Components\TextInput::make('name_bn')->label('Full Name (Bangla)'),
