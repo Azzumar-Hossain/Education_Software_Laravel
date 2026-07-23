@@ -1,9 +1,10 @@
-<div class="space-y-6 text-left dark:text-gray-200">
+<div class="space-y-6 text-left text-gray-900 dark:text-gray-100">
     
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         
+        <!-- Personal Details -->
         <div class="p-6 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm">
-            <h3 class="text-xs font-bold uppercase tracking-wider mb-4 text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-gray-800 pb-2 flex items-center gap-2">
+            <h3 class="text-xs font-bold uppercase tracking-wider mb-4 text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 pb-2 flex items-center gap-2">
                 <x-heroicon-o-user class="w-4 h-4 text-amber-500"/> Personal Details
             </h3>
             <div class="space-y-3 text-sm">
@@ -19,20 +20,20 @@
                 </div>
                 <div class="flex justify-between items-center py-1 border-t border-gray-100 dark:border-gray-800/50">
                     <span class="text-gray-500 dark:text-gray-400">Email Address</span>
-                    <span class="text-gray-700 dark:text-gray-300 font-medium">{{ $student->email ?? 'N/A' }}</span>
+                    <span class="text-gray-700 dark:text-gray-300 font-medium font-mono">{{ $student->email ?? 'N/A' }}</span>
                 </div>
             </div>
         </div>
 
         @php
-            // Pull the exact 4th subject choice mapped to the database optional key
             $fourthSubject = $enrollment->optional_subject_id 
                 ? \App\Models\Subject::find($enrollment->optional_subject_id) 
                 : null;
         @endphp
 
+        <!-- Academic Information -->
         <div class="p-6 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm">
-            <h3 class="text-xs font-bold uppercase tracking-wider mb-4 text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-gray-800 pb-2 flex items-center gap-2">
+            <h3 class="text-xs font-bold uppercase tracking-wider mb-4 text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 pb-2 flex items-center gap-2">
                 <x-heroicon-o-academic-cap class="w-4 h-4 text-amber-500"/> Academic Information
             </h3>
             <div class="space-y-3 text-sm">
@@ -73,8 +74,9 @@
         </div>
     </div>
 
+    <!-- Assigned Course Subjects -->
     <div class="p-6 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm">
-        <h3 class="text-xs font-bold uppercase tracking-wider mb-4 text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-gray-800 pb-2 flex items-center gap-2">
+        <h3 class="text-xs font-bold uppercase tracking-wider mb-4 text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 pb-2 flex items-center gap-2">
             <x-heroicon-o-book-open class="w-4 h-4 text-amber-500"/> Assigned Course Subjects
         </h3>
         
@@ -82,20 +84,16 @@
             $currentClassId = $enrollment->school_class_id;
             $groupName = $enrollment->study_group; 
 
-            // Find matching study group record dynamically to resolve its actual ID
             $resolvedGroup = \App\Models\StudyGroup::where('name', $groupName)->first();
             $resolvedGroupId = $resolvedGroup ? $resolvedGroup->id : null;
 
-            // Fetch cleanly filtered subjects matching their stream choices
             $allAssignedSubjects = \App\Models\Subject::whereHas('schoolClasses', function ($q) use ($currentClassId) {
                     $q->where('school_classes.id', $currentClassId);
                 })
                 ->where(function ($query) use ($resolvedGroupId, $enrollment) {
-                    // 1. Core compulsory items (Global - Study group is blank)
                     $query->whereNull('study_group_id')
                           ->whereIn('subject_type', ['Core', 'Core / Compulsory']);
                           
-                    // 2. Global Elective choices ONLY if this specific student selected it
                     if ($enrollment->optional_subject_id) {
                         $query->orWhere(function ($q) use ($enrollment) {
                             $q->whereNull('study_group_id')
@@ -104,7 +102,6 @@
                         });
                     }
                           
-                    // 3. Stream-locked papers (Science, Commerce, etc.) matching their group
                     if ($resolvedGroupId) {
                         $query->orWhere(function ($q) use ($resolvedGroupId, $enrollment) {
                             $q->where('study_group_id', $resolvedGroupId)
@@ -124,16 +121,15 @@
         @if($allAssignedSubjects->isEmpty())
             <div class="text-center py-8">
                 <x-heroicon-o-exclamation-triangle class="w-8 h-8 text-gray-400 mx-auto mb-2"/>
-                <p class="text-sm text-gray-500 italic">No mapped subjects configured for this student yet.</p>
+                <p class="text-sm text-gray-500 dark:text-gray-400 italic">No mapped subjects configured for this student yet.</p>
             </div>
         @else
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-96 overflow-y-auto pr-1">
                 @foreach($allAssignedSubjects as $subject)
                     @php
                         $subjectNameLower = strtolower($subject->name);
                         $studentReligion = strtolower(trim($student->religion ?? ''));
 
-                        // 🕋 RELIGION FILTER LAYER: Skip mismatch papers instantly
                         if (str_contains($subjectNameLower, 'islam') && $studentReligion !== 'islam') continue;
                         if (str_contains($subjectNameLower, 'hindu') && !str_contains($studentReligion, 'hindu')) continue;
                         if (str_contains($subjectNameLower, 'christian') && !str_contains($studentReligion, 'christian')) continue;
@@ -151,23 +147,30 @@
                         }
                     @endphp
                     
-                    <div class="flex items-center justify-between p-3.5 rounded-xl border transition-all duration-200 {{ $is4th ? 'bg-emerald-500/5 border-emerald-500/30 dark:border-emerald-500/40 shadow-sm' : 'bg-gray-50 dark:bg-gray-900/40 border-gray-100 dark:border-gray-800/80 hover:border-gray-200 dark:hover:border-gray-700 shadow-sm' }}">
+                    <!-- 🌟 FORCED DARK STYLING INLINE TO OVERRIDE TAILWIND OVERWRITE 🌟 -->
+                    <div 
+                        class="flex items-center justify-between p-3.5 rounded-xl border transition-all duration-200"
+                        style="
+                            background-color: {{ $is4th ? 'rgba(16, 185, 129, 0.15)' : 'rgba(31, 41, 55, 0.8)' }} !important; 
+                            border-color: {{ $is4th ? 'rgba(16, 185, 129, 0.4)' : 'rgba(55, 65, 81, 0.8)' }} !important;
+                        "
+                    >
                         <div class="flex flex-col text-left">
-                            <span class="font-bold text-sm text-gray-800 dark:text-gray-200 flex items-center gap-2">
+                            <span class="font-bold text-sm text-white flex items-center gap-2" style="color: #ffffff !important;">
                                 {{ $subject->name }}
                                 @if($is4th)
-                                    <span class="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
+                                    <span class="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-500/30 text-emerald-300 uppercase tracking-wider">
                                         4th
                                     </span>
                                 @endif
                             </span>
-                            <span class="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold tracking-wider mt-0.5">
+                            <span class="text-[10px] uppercase font-bold tracking-wider mt-0.5" style="color: #9ca3af !important;">
                                 {{ $typeLabel }}
                             </span>
                         </div>
                         
                         <div class="flex items-center gap-2">
-                            <span class="px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700/60 shadow-sm">
+                            <span class="px-2.5 py-1 rounded-lg text-xs font-mono font-bold border shadow-sm" style="background-color: #111827 !important; color: #f3f4f6 !important; border-color: #374151 !important;">
                                 {{ $subject->code ?? 'N/A' }}
                             </span>
                         </div>

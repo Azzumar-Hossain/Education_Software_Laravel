@@ -27,7 +27,7 @@ class FailList extends Page implements HasForms
     protected static string $view = 'filament.pages.fail-list';
 
     public ?array $data = [];
-    public $failedRecords = [];
+    public array $failRecords = []; // 🌟 Public property initialized as array for Blade
 
     public function mount(): void
     {
@@ -43,7 +43,7 @@ class FailList extends Page implements HasForms
                 ->color('gray')
                 ->action(function () {
                     $this->form->fill();
-                    $this->failedRecords = [];
+                    $this->failRecords = [];
                 }),
         ];
     }
@@ -126,34 +126,31 @@ class FailList extends Page implements HasForms
         $query = Enrollment::where('school_class_id', $inputs['school_class_id'])
             ->where('academic_year_id', $inputs['academic_year_id']);
 
-        if ($inputs['merit_scope'] === 'section') {
-            $query->where('section_id', $inputs['section_id']);
-        } elseif ($inputs['merit_scope'] === 'group') {
-            $query->where('study_group', $inputs['study_group']);
+        if (($inputs['merit_scope'] ?? null) === 'section') {
+            $query->where('section_id', $inputs['section_id'] ?? null);
+        } elseif (($inputs['merit_scope'] ?? null) === 'group') {
+            $query->where('study_group', $inputs['study_group'] ?? null);
         }
 
         $enrollments = $query->get();
-        $records = [];
+        $calculatedFailRecords = []; // 🌟 Explicitly initialized as an array
 
-        // 🌟 Fetch all letter grades manually designated as failing filters from your database matrix
+        // Fetch failing grades
         $failingGrades = \App\Models\GradeScale::where('is_fail_grade', true)
             ->pluck('letter_grade')
             ->toArray();
 
-        // Safe fallback array to avoid SQL syntax issues if the user config table is empty
         if (empty($failingGrades)) {
             $failingGrades = ['F'];
         }
 
         foreach ($enrollments as $enrollment) {
-            // 🌟 FIXED Context Layer: Look directly into the mark entry records row for the grade property
             $failedMarks = Mark::where('student_id', $enrollment->user_id)
                 ->where('academic_year_id', $inputs['academic_year_id'])
                 ->where('school_class_id', $inputs['school_class_id'])
                 ->whereIn('grade', $failingGrades)
                 ->get();
 
-            // Only include students who have at least one failed subject
             if ($failedMarks->isNotEmpty()) {
                 $allMarks = Mark::where('student_id', $enrollment->user_id)
                     ->where('academic_year_id', $inputs['academic_year_id'])
@@ -161,11 +158,8 @@ class FailList extends Page implements HasForms
 
                 $totalMarks = $allMarks->sum('marks_obtained');
 
-                // Generate comma-separated string of failed subjects
                 $failedSubjectsList = $failedMarks->map(function ($mark) {
                     $subName = Subject::find($mark->subject_id)?->name ?? 'Unknown';
-                    
-                    // Shorten subject name representation
                     $cleanName = trim(preg_replace('/\(.*\)/u', '', $subName));
                     $words = explode(' ', $cleanName);
                     $prefix = !empty($words[0]) ? ucfirst(strtolower($words[0])) : 'Sub';
@@ -173,27 +167,45 @@ class FailList extends Page implements HasForms
                     return substr($prefix, 0, 4) . " ({$mark->grade})";
                 })->implode(', ');
 
-                $records[] = [
-                    'student_id'   => $enrollment->user->student_id,
-                    'student_name' => $enrollment->user->name,
-                    'roll_number'  => $enrollment->roll_number,
-                    'section_name' => $enrollment->section->name ?? 'N/A',
-                    'group_name'   => $enrollment->study_group ?? 'General',
-                    'total_marks'  => $totalMarks,
-                    'failed_count' => $failedMarks->count(),
-                    'failed_list'  => $failedSubjectsList,
+                $calculatedFailRecords[] = [
+                    'student_id'               => $enrollment->user->student_id ?? 'N/A',
+                    'student_name'             => $enrollment->user->name ?? 'N/A',
+                    'roll_number'              => (int)($enrollment->roll_number ?? 0),
+                    'section_name'             => $enrollment->section->name ?? 'N/A',
+                    'group_name'                => $enrollment->study_group ?? 'General',
+                    'total_marks'              => (float)$totalMarks,
+                    'fail_count'               => $failedMarks->count(),
+                    'failed_subjects_summary'  => $failedSubjectsList,
                 ];
             }
         }
 
-        // Sort by number of failed subjects descending, then by roll number ascending
-        usort($records, function ($a, $b) {
-            if ($b['failed_count'] !== $a['failed_count']) {
-                return $b['failed_count'] <=> $a['failed_count'];
-            }
-            return $a['roll_number'] <=> $b['roll_number'];
-        });
+        // 🌟 3-PRIORITY SORTING ALGORITHM
+        if (!empty($calculatedFailRecords)) {
+            usort($calculatedFailRecords, function ($a, $b) {
+                // 1st Priority: Minimum failed subjects count comes first (ASC)
+                if ($a['fail_count'] !== $b['fail_count']) {
+                    return $a['fail_count'] <=> $b['fail_count'];
+                }
 
-        $this->failedRecords = $records;
+                // 2nd Priority: Highest total marks gained comes first (DESC)
+                if ($b['total_marks'] !== $a['total_marks']) {
+                    return $b['total_marks'] <=> $a['total_marks'];
+                }
+
+                // 3rd Priority: Lower Roll Number comes first (ASC)
+                return $a['roll_number'] <=> $b['roll_number'];
+            });
+
+            $this->failRecords = $calculatedFailRecords;
+        } else {
+            $this->failRecords = [];
+
+            \Filament\Notifications\Notification::make()
+                ->title('No Failed Students Found')
+                ->body('All students passed or no mark records were found for this selection.')
+                ->success()
+                ->send();
+        }
     }
 }
