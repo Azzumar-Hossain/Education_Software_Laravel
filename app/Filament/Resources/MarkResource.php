@@ -162,7 +162,6 @@ class MarkResource extends Resource
 
                             Forms\Components\Select::make('study_group')
                                 ->label('Study Group')
-                                // 🌟 FIXED: Pulled directly from database so filters always match!
                                 ->options(\App\Models\StudyGroup::pluck('name', 'name'))
                                 ->nullable()
                                 ->live()
@@ -346,7 +345,6 @@ class MarkResource extends Resource
                                 return $q->where('study_group', $groupName);
                             })
                             ->when(blank($data['study_group']), function ($q) {
-                                // 🌟 FIXED: Use 'LIKE' to smartly catch variations like "General" and "General(06-08)" 🌟
                                 return $q->where(fn($sub) => $sub->whereNull('study_group')->orWhere('study_group', 'like', '%General%'));
                             })
                             ->when($data['section_id'], function ($q, $sectionId) {
@@ -382,14 +380,12 @@ class MarkResource extends Resource
                                 if (str_contains($subjectNameLower, 'buddhi') && !str_contains($studentReligion, 'buddhi')) continue;
                             }
 
-                            // 🛑 🌟 STREAM GROUP SAFEGUARD PROTECTION 🌟
+                            // 🛑 STREAM GROUP SAFEGUARD PROTECTION
                             if ($studentGroup === 'Science') {
-                                // Science students MUST NOT get a General Science row generated
                                 if (str_contains($subjectNameLower, 'general science') || str_contains($subjectNameLower, 'সাধারণ বিজ্ঞান')) {
                                     continue;
                                 }
                             } else {
-                                // Arts/Commerce students MUST NOT get Physics, Chemistry, or Biology rows generated
                                 if (str_contains($subjectNameLower, 'physics') || str_contains($subjectNameLower, 'পদার্থবিজ্ঞান') ||
                                     str_contains($subjectNameLower, 'chemistry') || str_contains($subjectNameLower, 'রসায়ন') ||
                                     str_contains($subjectNameLower, 'biology') || str_contains($subjectNameLower, 'জীববিজ্ঞান')) {
@@ -434,7 +430,68 @@ class MarkResource extends Resource
                             ->success()
                             ->send();
                     }),
-                    
+
+                // 🌟 NEW DETACH SUBJECT MARKS ACTION 🌟
+                Tables\Actions\Action::make('detach_subject_marks')
+                    ->label('Detach Subject Marks')
+                    ->icon('heroicon-o-trash')
+                    ->color('danger')
+                    ->requiresConfirmation()
+                    ->modalHeading('Detach & Purge Subject Marks')
+                    ->modalDescription('This will permanently delete all generated mark entries for the selected subject across all students in this exam. Are you sure?')
+                    ->modalSubmitActionLabel('Yes, Purge Subject Marks')
+                    ->form([
+                        Forms\Components\Select::make('academic_year_id')
+                            ->label('Academic Year')
+                            ->options(AcademicYear::pluck('name', 'id'))
+                            ->required(),
+
+                        Forms\Components\Select::make('school_class_id')
+                            ->label('Class')
+                            ->options(SchoolClass::pluck('name', 'id'))
+                            ->required()
+                            ->live()
+                            ->afterStateUpdated(function (Forms\Set $set) {
+                                $set('exam_id', null);
+                                $set('subject_id', null);
+                            }),
+
+                        Forms\Components\Select::make('exam_id')
+                            ->label('Exam')
+                            ->options(function (Forms\Get $get) {
+                                $classId = $get('school_class_id');
+                                if (!$classId) return [];
+                                return Exam::where('school_class_id', $classId)->pluck('name', 'id');
+                            })
+                            ->required()
+                            ->live(),
+
+                        Forms\Components\Select::make('subject_id')
+                            ->label('Select Subject to Detach')
+                            ->options(function (Forms\Get $get) {
+                                $classId = $get('school_class_id');
+                                if (!$classId) return Subject::pluck('name', 'id');
+
+                                return Subject::whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $classId))
+                                    ->pluck('name', 'id');
+                            })
+                            ->searchable()
+                            ->required(),
+                    ])
+                    ->action(function (array $data) {
+                        $deletedCount = Mark::where('academic_year_id', $data['academic_year_id'])
+                            ->where('school_class_id', $data['school_class_id'])
+                            ->where('exam_id', $data['exam_id'])
+                            ->where('subject_id', $data['subject_id'])
+                            ->delete();
+
+                        \Filament\Notifications\Notification::make()
+                            ->title('Subject Marks Detached!')
+                            ->body("Successfully purged mark entries for {$deletedCount} students.")
+                            ->success()
+                            ->send();
+                    }),
+
                 Tables\Actions\Action::make('finish_grading')
                     ->label('Finish & Save All')
                     ->icon('heroicon-o-check-circle')
@@ -476,7 +533,6 @@ class MarkResource extends Resource
     public static function getPages(): array
     {
         return [
-            // Points to index map cleanly
             'index' => Pages\ListMarks::route('/'),
         ];
     }

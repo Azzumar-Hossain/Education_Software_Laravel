@@ -19,6 +19,12 @@ class UserResource extends Resource
 
     protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
 
+    // 🌟 MOVES "Users" UNDER THE "Settings" COLLAPSIBLE SIDEBAR GROUP
+    protected static ?string $navigationGroup = 'Settings';
+
+    // 🌟 (OPTIONAL) CONTROL ORDER WITHIN THE SETTINGS GROUP
+    protected static ?int $navigationSort = 2;
+    
     public static function form(Form $form): Form
     {
         return $form
