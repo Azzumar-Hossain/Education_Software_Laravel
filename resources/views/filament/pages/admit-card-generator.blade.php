@@ -11,7 +11,24 @@
     @if(count($enrollments) > 0)
         @php
             $siteSetting = \Illuminate\Support\Facades\DB::table('site_settings')->first() ?? \App\Models\Setting::first();
-            $logoPath = ($siteSetting && !empty($siteSetting->logo)) ? \Illuminate\Support\Facades\Storage::url($siteSetting->logo) : null;
+            
+            $schoolName = !empty($siteSetting?->school_name_en) 
+                ? $siteSetting->school_name_en 
+                : 'Shankarbati High School';
+
+            $schoolAddress = !empty($siteSetting?->address_en) 
+                ? $siteSetting->address_en 
+                : 'Chapai Nawabganj, Bangladesh';
+
+            $logoPath = ($siteSetting && !empty($siteSetting->logo)) 
+                ? \Illuminate\Support\Facades\Storage::url($siteSetting->logo) 
+                : null;
+
+            $words = explode(' ', $schoolName);
+            $initials = count($words) >= 2 
+                ? strtoupper(substr($words[0], 0, 1) . substr($words[1], 0, 1)) 
+                : strtoupper(substr($schoolName, 0, 2));
+
             $examName = \App\Models\Exam::find($this->data['exam_id'])?->name ?? 'Terminal Examination';
             $yearName = \App\Models\AcademicYear::find($this->data['academic_year_id'])?->name ?? date('Y');
         @endphp
@@ -27,8 +44,6 @@
             <div class="admit-cards-grid">
                 @foreach($enrollments as $enrollment)
                     @php
-                        // 🌟 DYNAMIC PROFILE PHOTO DETECTOR
-                        // Adjust 'avatar' or 'photo' to match the column name on your User table
                         $studentPhoto = (!empty($enrollment->user->avatar)) 
                             ? \Illuminate\Support\Facades\Storage::url($enrollment->user->avatar) 
                             : ((!empty($enrollment->user->photo)) ? \Illuminate\Support\Facades\Storage::url($enrollment->user->photo) : null);
@@ -40,12 +55,12 @@
                                 @if($logoPath)
                                     <img src="{{ $logoPath }}" alt="School Logo" class="admit-logo">
                                 @else
-                                    <div class="admit-logo-fallback">HM</div>
+                                    <div class="admit-logo-fallback">{{ $initials }}</div>
                                 @endif
                             </div>
                             <div class="title-area">
-                                <h1>Harimohan Govt. High School</h1>
-                                <p class="sub-school">Chapai Nawabganj, Bangladesh</p>
+                                <h1>{{ $schoolName }}</h1>
+                                <p class="sub-school">{{ $schoolAddress }}</p>
                                 <div class="exam-badge-title">{{ $examName }} - {{ $yearName }}</div>
                             </div>
                         </div>
@@ -120,32 +135,11 @@
 
     <style>
         /* --- ADMIT CARD LAYOUT BASE STYLES --- */
-        .admit-cards-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 25px;
-            width: 100%;
-        }
-        .admit-card-container {
-            background: #ffffff;
-            border: 2px solid #1e293b;
-            border-radius: 8px;
-            padding: 20px;
-            position: relative;
-            color: #000000;
-            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05);
-            max-width: 750px;
-            margin: 0 auto;
-            width: 100%;
-        }
+        .admit-cards-grid { display: grid; grid-template-columns: 1fr; gap: 25px; width: 100%; }
+        .admit-card-container { background: #ffffff; border: 2px solid #1e293b; border-radius: 8px; padding: 20px; position: relative; color: #000000; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05); max-width: 750px; margin: 0 auto; width: 100%; }
         
         /* HEADER STRIP */
-        .admit-header {
-            display: flex;
-            align-items: center;
-            border-bottom: 2px solid #000000;
-            padding-bottom: 10px;
-        }
+        .admit-header { display: flex; align-items: center; border-bottom: 2px solid #000000; padding-bottom: 10px; }
         .logo-area { margin-right: 15px; }
         .admit-logo { width: 55px; height: 55px; object-fit: contain; }
         .admit-logo-fallback { width: 50px; height: 50px; border-radius: 50%; background: #000; color: #fff; font-weight: bold; display: flex; align-items: center; justify-content: center; }
@@ -154,52 +148,14 @@
         .sub-school { font-size: 11px; color: #475569; font-weight: 500; }
         .exam-badge-title { font-size: 12px; font-weight: bold; background: #f1f5f9; border: 1px solid #cbd5e1; padding: 2px 8px; border-radius: 4px; display: inline-block; margin-top: 4px; text-transform: uppercase; color: #0f172a; }
 
-        .admit-type-banner {
-            text-align: center;
-            font-size: 16px;
-            font-weight: 900;
-            letter-spacing: 2px;
-            margin: 12px 0;
-            border-bottom: 1px double #000;
-            padding-bottom: 3px;
-            color: #000000;
-        }
+        .admit-type-banner { text-align: center; font-size: 16px; font-weight: 900; letter-spacing: 2px; margin: 12px 0; border-bottom: 1px double #000; padding-bottom: 3px; color: #000000; }
 
-        /* 🌟 NEW STUDENT WRAPPER BODY GRAPHICS WITH PHOTO CONTAINER */
-        .admit-body-wrapper {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 10px;
-        }
-        .student-info-section {
-            width: 78%;
-        }
-        .student-photo-box {
-            width: 95px;
-            height: 115px;
-            border: 1.5px solid #000000;
-            border-radius: 4px;
-            overflow: hidden;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #ffffff;
-            margin-right: 5px;
-        }
-        .student-live-avatar {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-        .photo-placeholder-text {
-            font-size: 9px;
-            color: #94a3b8;
-            text-align: center;
-            font-weight: bold;
-            text-transform: uppercase;
-            line-height: 1.2;
-        }
+        /* STUDENT WRAPPER BODY GRAPHICS WITH PHOTO CONTAINER */
+        .admit-body-wrapper { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+        .student-info-section { width: 78%; }
+        .student-photo-box { width: 95px; height: 115px; border: 1.5px solid #000000; border-radius: 4px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #ffffff; margin-right: 5px; }
+        .student-live-avatar { width: 100%; height: 100%; object-fit: cover; }
+        .photo-placeholder-text { font-size: 9px; color: #94a3b8; text-align: center; font-weight: bold; text-transform: uppercase; line-height: 1.2; }
 
         .student-info-table { width: 100%; border-collapse: collapse; }
         .student-info-table td { padding: 4px 6px; vertical-align: middle; border: none !important; }
@@ -218,26 +174,73 @@
         .sig-line-dashed { border-top: 1px dashed #000000; width: 100%; margin-bottom: 4px; }
         .sig-block p { font-size: 10px; font-weight: bold; color: #1e293b; text-transform: uppercase; }
 
-        /* --- PRINT MODIFIERS --- */
+        /* 🌟 BULLETPROOF PRINT RESET 🌟 */
         @media print {
-            .no-print, header, sidebar, nav, .fi-sidebar, .fi-topbar, form { display: none !important; }
-            body, .fi-main, .fi-content, main, .fi-layout { background: white !important; padding: 0 !important; margin: 0 !important; }
-            .print-wrapper-main { padding: 0 !important; margin: 0 !important; }
-            .admit-cards-grid { display: block !important; }
+            @page {
+                size: A4 portrait;
+                margin: 8mm 6mm;
+            }
+
+            /* 1. Force the absolute base to be pure white */
+            :root, html, body {
+                color-scheme: light !important;
+                background: #ffffff !important;
+                background-color: #ffffff !important;
+            }
+
+            /* 2. Hide Filament UI entirely */
+            .no-print, 
+            header, 
+            aside, 
+            nav,
+            .fi-sidebar, 
+            .fi-topbar, 
+            .fi-header, 
+            .fi-breadcrumbs { 
+                display: none !important; 
+            }
+
+            /* 3. Strip ALL backgrounds & fix scroll-lock blank page issue on EVERY wrapper element */
+            body * {
+                background: transparent !important;
+                background-color: transparent !important;
+                height: auto !important;
+                min-height: 0 !important;
+                overflow: visible !important;
+                position: static !important;
+                box-shadow: none !important;
+            }
+
+            /* 4. Restore White Background & Black Text EXCLUSIVELY to our Admit Cards */
+            .admit-card-container, 
+            .admit-card-container * {
+                background: #ffffff !important;
+                background-color: #ffffff !important;
+                color: #000000 !important;
+                border-color: #000000 !important;
+            }
+
+            /* 5. Layout specific fixes for print */
+            .admit-cards-grid { 
+                display: block !important; 
+                width: 100% !important;
+                padding: 0 !important;
+                margin: 0 !important;
+            }
             
             .admit-card-container {
                 border: 1.5px solid #000000 !important;
-                box-shadow: none !important;
-                margin-bottom: 35px !important;
+                margin-bottom: 25px !important;
                 page-break-inside: avoid !important;
+                break-inside: avoid !important;
                 padding: 15px !important;
                 max-width: 100% !important;
             }
+
             .student-photo-box { border: 1.5px solid #000000 !important; }
-            .photo-placeholder-text { color: #000000 !important; }
-            .admit-instructions { background: none !important; border: 1px dashed #000 !important; }
-            .exam-badge-title { background: none !important; border: 1px solid #000 !important; }
-            .lbl, .val, .admit-instructions li { color: #000000 !important; }
+            .admit-instructions { border: 1px dashed #000000 !important; }
+            .exam-badge-title { border: 1px solid #000000 !important; }
+            .sig-line-dashed { border-top: 1px dashed #000000 !important; width: 100% !important; }
         }
     </style>
 </x-filament-panels::page>

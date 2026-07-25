@@ -14,7 +14,6 @@ use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Filament\Infolists;
 use Filament\Infolists\Infolist;
-use Filament\Forms\Components\ViewField;
 
 class StudentResource extends Resource
 {
@@ -59,7 +58,6 @@ class StudentResource extends Resource
                                             ->view('filament.forms.components.custom-student-photo-uploader')
                                             ->columnSpanFull(), 
                                             //->alignCenter(),
-
                                         Forms\Components\TextInput::make('name')->required()->label('Full Name (English)'),
                                         Forms\Components\TextInput::make('name_bn')->label('Full Name (Bangla)'),
                                         

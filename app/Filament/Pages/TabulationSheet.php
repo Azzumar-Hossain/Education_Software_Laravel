@@ -80,18 +80,18 @@ class TabulationSheet extends Page implements HasForms
                                 ])->nullable(),
 
                             // 🌟 DYNAMIC USER-SELECTABLE ROWS PER PAGE DROPDOWN 🌟
-                            //Select::make('rows_per_page')
-                            //    ->label('Rows / Page')
-                            //    ->options([
-                            //        '5'  => '5 Rows / Page',
-                            //        '6'  => '6 Rows / Page',
-                            //        '7'  => '7 Rows / Page (Recommended)',
-                            //        '8'  => '8 Rows / Page',
-                            //        '10' => '10 Rows / Page',
-                            //        '12' => '12 Rows / Page',
-                            //    ])
-                            //    ->default(7)
-                            //    ->required(),
+                            Select::make('rows_per_page')
+                                ->label('Rows / Page')
+                                ->options([
+                                    '5'  => '5 Rows / Page',
+                                    '6'  => '6 Rows / Page',
+                                    '7'  => '7 Rows / Page (Recommended)',
+                                    '8'  => '8 Rows / Page',
+                                    '10' => '10 Rows / Page',
+                                    '12' => '12 Rows / Page',
+                                ])
+                                ->default(7)
+                                ->required(),
                         ]),
                     ]),
             ]);

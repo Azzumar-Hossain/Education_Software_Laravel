@@ -58,7 +58,7 @@ class SeatPlanGenerator extends Page implements HasForms
                     ->schema([
                         Grid::make([
                             'default' => 1,
-                            'md' => 3, // 🌟 Adjusted display spread column layout count to match current fields count perfectly
+                            'md' => 3,
                         ])->schema([
                             Select::make('academic_year_id')
                                 ->label('Academic Year')
@@ -124,37 +124,39 @@ class SeatPlanGenerator extends Page implements HasForms
         $inputs = $this->data;
         $formationCount = (int) ($inputs['formation'] ?? 1);
         
-        // 🌟 SAFETY FALLBACK ENTRIES
         $roomNumber = $inputs['room_name'] ?? $inputs['room_number'] ?? 'Auto Allocated';
         $maxBenchesAllowed = (int) ($inputs['max_benches'] ?? 999); 
 
-        // 1. Fetch student queues ordered by roll number sequentially
+        // 🌟 1. Fetch student queues ordered NUMERICALLY by roll number
         $slots = [];
         $slots[] = Enrollment::with('user', 'schoolClass')
             ->where('school_class_id', $inputs['class_slot_1'])
             ->where('academic_year_id', $inputs['academic_year_id'])
-            ->orderBy('roll_number', 'asc')->get()->toArray();
+            ->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')
+            ->get()->toArray();
 
         $slots[] = Enrollment::with('user', 'schoolClass')
             ->where('school_class_id', $inputs['class_slot_2'])
             ->where('academic_year_id', $inputs['academic_year_id'])
-            ->orderBy('roll_number', 'asc')->get()->toArray();
+            ->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')
+            ->get()->toArray();
 
         if ($formationCount === 3) {
             $slots[] = Enrollment::with('user', 'schoolClass')
                 ->where('school_class_id', $inputs['class_slot_3'])
                 ->where('academic_year_id', $inputs['academic_year_id'])
-                ->orderBy('roll_number', 'asc')->get()->toArray();
+                ->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')
+                ->get()->toArray();
         }
 
-        // Find largest enrollment stack to determine outer loop length bound limits
+        // Find largest enrollment stack to determine outer loop limits
         $maxCount = max(array_map('count', $slots));
         
         $benchIndex = 1;
         $generatedAllocation = [];
         $overflowDetected = false;
 
-        // 🌟 FIXED: Clears using the fallback room variable instead of calling the missing array key directly
+        // Clear existing seat plan records for this room and exam
         SeatPlan::where('exam_id', $inputs['exam_id'])
             ->where('room_number', $roomNumber)
             ->delete();
@@ -175,7 +177,6 @@ class SeatPlanGenerator extends Page implements HasForms
                 if ($slotData) {
                     $hasDataThisRow = true;
                     
-                    // 🌟 FIXED: Saves database structure mapped cleanly via local fallback variable
                     SeatPlan::create([
                         'academic_year_id' => $inputs['academic_year_id'],
                         'exam_id' => $inputs['exam_id'],
@@ -193,7 +194,7 @@ class SeatPlanGenerator extends Page implements HasForms
                         'student_name' => $slotData['user']['name'] ?? 'Unknown',
                         'student_id' => $slotData['user']['student_id'] ?? '',
                         'class_name' => $slotData['school_class']['name'] ?? '',
-                        'roll' => $slotData['roll_number']
+                        'roll' => (int) $slotData['roll_number']
                     ];
                 }
             }

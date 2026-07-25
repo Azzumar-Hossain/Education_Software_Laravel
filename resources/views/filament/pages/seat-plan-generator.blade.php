@@ -10,6 +10,22 @@
 
     @if(count($previewSeats) > 0)
         @php
+            // 🌟 DYNAMIC SITE SETTINGS FETCH 🌟
+            $siteSetting = \Illuminate\Support\Facades\DB::table('site_settings')->first() 
+                ?? \App\Models\Setting::first();
+            
+            $schoolName = !empty($siteSetting?->school_name_en) 
+                ? $siteSetting->school_name_en 
+                : 'Shankarbati High School';
+
+            $schoolAddress = !empty($siteSetting?->address_en) 
+                ? $siteSetting->address_en 
+                : 'Chapai Nawabganj, Bangladesh';
+
+            $logoPath = ($siteSetting && !empty($siteSetting->logo)) 
+                ? \Illuminate\Support\Facades\Storage::url($siteSetting->logo) 
+                : null;
+
             $examName = \App\Models\Exam::find($this->data['exam_id'])?->name ?? 'Examination';
             $roomName = $this->data['room_name'] ?? $this->data['room_number'] ?? 'Auto Allocated';
         @endphp
@@ -27,9 +43,16 @@
                 </div>
             </div>
 
+            <!-- 🌟 NOTICE BOARD VIEW 🌟 -->
             <div id="notice-board-view" class="print-target-section bg-white dark:bg-gray-900 border border-gray-200 dark:border-white/10 rounded-xl p-6">
                 <div class="text-center border-b-2 border-black pb-4 mb-6 notice-header-print">
-                    <h1 class="text-2xl font-black uppercase tracking-tight text-black dark:text-white serif-font">Harimohan Govt. High School</h1>
+                    @if($logoPath)
+                        <div class="flex justify-center mb-3">
+                            <img src="{{ $logoPath }}" alt="School Logo" class="h-16 w-16 object-contain" style="max-height: 60px; max-width: 60px;">
+                        </div>
+                    @endif
+                    <h1 class="text-2xl font-black uppercase tracking-tight text-black dark:text-white serif-font">{{ $schoolName }}</h1>
+                    <p class="text-xs text-gray-600 dark:text-gray-400 font-medium mb-1">{{ $schoolAddress }}</p>
                     <p class="text-sm font-bold text-gray-600 tracking-wide uppercase">{{ $examName }} — Seating Arrangement</p>
                     <div class="inline-block mt-3 bg-black text-white px-4 py-1 text-xs font-black tracking-widest rounded uppercase">
                         ROOM: {{ $roomName }}
@@ -80,12 +103,13 @@
                 </div>
             </div>
 
+            <!-- 🌟 DESK SLIPS VIEW 🌟 -->
             <div id="desk-slips-view" class="print-target-section hidden-on-screen">
                 <div class="slips-flex-wrap">
                     @foreach($previewSeats as $benchNo => $seats)
                         @foreach($seats as $seatDetails)
                             <div class="individual-desk-slip">
-                                <div class="slip-header-brand">Harimohan Govt. High School</div>
+                                <div class="slip-header-brand">{{ $schoolName }}</div>
                                 <div class="slip-exam-sub">{{ $examName }}</div>
                                 
                                 <table class="slip-data-matrix">
@@ -130,7 +154,7 @@
         .c-badge { font-size: 9px; font-weight: 800; background: #f1f5f9; border: 1px solid #cbd5e1; padding: 1px 5px; border-radius: 4px; display: inline-block; width: max-content; margin-bottom: 3px; color: #1e293b; text-transform: uppercase; }
         .s-name { font-size: 13px; color: #000000; line-height: 1.2; }
 
-        /* --- DESK SLIP SCILING GRAPHICS --- */
+        /* --- DESK SLIP STYLING --- */
         .slips-flex-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; width: 100%; }
         .individual-desk-slip { 
             background: #ffffff; 
@@ -147,58 +171,78 @@
         .sl-lbl { font-weight: bold; width: 15%; }
         .slip-footer-meta { margin-top: 10px; border-top: 1px dotted #000; padding-top: 3px; font-size: 9px; font-weight: 900; text-transform: uppercase; text-align: right; color: #000; }
 
-        /* --- 🌟 COMPLETE OVERHAUL PRINT INJECTION RULES --- */
+        /* --- 🌟 BULLETPROOF PRINT RESET 🌟 --- */
         @media print {
-            /* 🌟 ENFORCED REMOVAL OF BENCH NUMBER COLUMN ON PRINT LAYOUT */
-            .print-hide-column {
-                display: none !important;
-            }
+            @page { size: A4 portrait; margin: 8mm 6mm; }
 
-            /* 1. Hide EVERY default Filament page block wrapper instantly */
-            html, body, div, section, main, header, nav, aside {
-                visibility: hidden !important;
-                background: transparent !important;
-                box-shadow: none !important;
-                border: none !important;
-            }
-
-            /* 2. Un-hide ONLY our target elements container stack */
-            .print-active-target, 
-            .print-active-target * {
-                visibility: visible !important;
-            }
-
-            /* 3. Force target block to anchor absolute top-left boundary corner */
-            .print-active-target {
-                position: absolute !important;
-                left: 0 !important;
-                top: 0 !important;
-                width: 100% !important;
-                display: block !important;
+            /* 1. Force the absolute base to be pure white */
+            :root { color-scheme: light !important; }
+            html, body {
                 background: #ffffff !important;
+                background-color: #ffffff !important;
+            }
+
+            /* 2. Hide Filament UI entirely and inactive print sections */
+            .no-print, header, aside, nav, .fi-sidebar, .fi-topbar, .fi-header, .fi-breadcrumbs, form,
+            .print-target-section:not(.print-active-target) { 
+                display: none !important; 
+            }
+
+            /* 3. Strip ALL backgrounds from EVERY wrapper element to kill the gray overlay */
+            *, *::before, *::after {
+                background: transparent !important;
+                background-color: transparent !important;
+                color: #000000 !important; /* Force ALL text to black */
+                border-color: #000000 !important; /* Force ALL borders to black */
+                box-shadow: none !important;
+                text-shadow: none !important;
+            }
+
+            /* 4. Destroy scroll-locks preventing multi-page print */
+            html, body, .fi-layout, .fi-main, .fi-content, .fi-page, .no-print-wrapper-container, .print-active-target {
+                height: auto !important;
+                min-height: 0 !important;
+                overflow: visible !important;
+                position: static !important;
+                display: block !important;
                 padding: 0 !important;
                 margin: 0 !important;
             }
 
-            /* 4. Formatting variables override map for Notice List */
+            /* ------------------------------------- */
+            /* NOTICE BOARD PRINT SPECS              */
+            /* ------------------------------------- */
+            .print-hide-column { display: none !important; }
+            
             table.master-notice-table { width: 100% !important; border-collapse: collapse !important; }
-            table.master-notice-table th { background: #e2e8f0 !important; color: #000000 !important; border: 1.5px solid #000000 !important; font-weight: bold !important; visibility: visible !important; }
-            table.master-notice-table td { background: #ffffff !important; color: #000000 !important; border: 1.5px solid #000000 !important; visibility: visible !important; }
-            .c-badge { border: 1px solid #000000 !important; background: transparent !important; color: #000000 !important; }
-            .vacant-text { color: #cbd5e1 !important; }
+            table.master-notice-table th { 
+                background: #e2e8f0 !important; /* Restore header gray box */
+                background-color: #e2e8f0 !important;
+                -webkit-print-color-adjust: exact !important; 
+                print-color-adjust: exact !important;
+                font-weight: bold !important; 
+                border: 1.5px solid #000000 !important; 
+            }
+            table.master-notice-table td { 
+                border: 1.5px solid #000000 !important; 
+            }
+            
+            .c-badge { border: 1px solid #000000 !important; }
+            .vacant-text { color: #888888 !important; } /* Soften empty slots */
 
-            /* 5. Formatting variables override map for Desk Slips (Fits 8 tags cleanly per page grid) */
+            /* ------------------------------------- */
+            /* DESK SLIPS PRINT SPECS                */
+            /* ------------------------------------- */
             .print-active-slips-grid {
                 display: grid !important;
                 grid-template-columns: 1fr 1fr !important;
                 gap: 10mm !important;
                 width: 100% !important;
             }
-            .print-active-slips-grid .individual-desk-slip {
+            .individual-desk-slip {
                 border: 1.5px dashed #000000 !important;
                 height: 60mm !important;
                 page-break-inside: avoid !important;
-                display: block !important;
             }
         }
     </style>
@@ -209,7 +253,6 @@
         });
 
         function printSection(sectionId) {
-            // Drop any tracking flags across targets
             document.querySelectorAll('.print-target-section').forEach(el => {
                 el.classList.remove('print-active-target', 'print-active-slips-grid');
             });
@@ -223,7 +266,6 @@
                 target.classList.add('print-active-slips-grid');
             }
 
-            // Small timeout delay ensures browser execution threads sync up smoothly before firing frame
             setTimeout(() => {
                 window.print();
             }, 50);
