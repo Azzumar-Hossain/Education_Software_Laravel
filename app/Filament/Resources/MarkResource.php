@@ -12,12 +12,15 @@ use App\Models\SchoolClass;
 use App\Models\Section;
 use App\Models\TeacherAllocation;
 use App\Models\GradeScale;
+use App\Exports\MarksImportTemplateExport;
+use App\Imports\MarksImport;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Maatwebsite\Excel\Facades\Excel;
 
 class MarkResource extends Resource
 {
@@ -252,6 +255,128 @@ class MarkResource extends Resource
             ], layout: Tables\Enums\FiltersLayout::AboveContent)
             
             ->headerActions([
+                // 🌟 1. DOWNLOAD MARKS EXCEL TEMPLATE BUTTON (WITH GENERATION GUARD)
+                Tables\Actions\Action::make('download_marks_template')
+                    ->label('Download Template')
+                    ->icon('heroicon-o-document-arrow-down')
+                    ->color('info')
+                    ->modalHeading('Download Marks Entry Template')
+                    ->modalDescription('Select filters to download pre-filled student list excel file for marks entry.')
+                    ->form([
+                        Forms\Components\Grid::make(2)->schema([
+                            Forms\Components\Select::make('academic_year_id')
+                                ->label('Academic Year')
+                                ->options(AcademicYear::pluck('name', 'id'))
+                                ->required(),
+
+                            Forms\Components\Select::make('school_class_id')
+                                ->label('Class')
+                                ->options(SchoolClass::pluck('name', 'id'))
+                                ->required()
+                                ->live()
+                                ->afterStateUpdated(function (Forms\Set $set) {
+                                    $set('exam_id', null);
+                                    $set('section_id', null);
+                                    $set('subject_id', null);
+                                }),
+
+                            Forms\Components\Select::make('section_id')
+                                ->label('Section')
+                                ->options(function (Forms\Get $get) {
+                                    $classId = $get('school_class_id');
+                                    if (!$classId) return [];
+                                    $class = SchoolClass::with('sections')->find($classId);
+                                    return $class ? $class->sections->pluck('name', 'id') : [];
+                                })
+                                ->placeholder('All Sections')
+                                ->live(),
+
+                            Forms\Components\Select::make('exam_id')
+                                ->label('Target Exam')
+                                ->options(fn (Forms\Get $get) => $get('school_class_id')
+                                    ? Exam::where('school_class_id', $get('school_class_id'))->pluck('name', 'id')
+                                    : Exam::pluck('name', 'id')
+                                )
+                                ->required()
+                                ->live(),
+
+                            Forms\Components\Select::make('subject_id')
+                                ->label('Subject')
+                                ->options(fn (Forms\Get $get) => $get('school_class_id')
+                                    ? Subject::whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $get('school_class_id')))->pluck('name', 'id')
+                                    : Subject::pluck('name', 'id')
+                                )
+                                ->searchable()
+                                ->required(),
+                        ]),
+                    ])
+                    ->action(function (array $data) {
+                        // 🛑 GUARD CHECK: Ensure Mark Sheets have been generated first!
+                        $existingMarksCount = Mark::where('academic_year_id', $data['academic_year_id'])
+                            ->where('school_class_id', $data['school_class_id'])
+                            ->where('exam_id', $data['exam_id'])
+                            ->where('subject_id', $data['subject_id'])
+                            ->when(!empty($data['section_id']), fn($q) => $q->where('section_id', $data['section_id']))
+                            ->count();
+
+                        if ($existingMarksCount === 0) {
+                            \Filament\Notifications\Notification::make()
+                                ->title('Mark Sheet Not Generated!')
+                                ->body('Please click "Generate Mark Sheet" for this subject before downloading the Excel template.')
+                                ->warning()
+                                ->persistent()
+                                ->send();
+
+                            return;
+                        }
+
+                        $class = SchoolClass::find($data['school_class_id']);
+                        $subject = Subject::find($data['subject_id']);
+                        
+                        $className = $class ? str_replace(' ', '_', $class->name) : 'Class';
+                        $subjectName = $subject ? str_replace(' ', '_', $subject->name) : 'Subject';
+
+                        $fileName = "Marks_Template_{$className}_{$subjectName}.xlsx";
+
+                        return Excel::download(
+                            new MarksImportTemplateExport(
+                                $data['academic_year_id'],
+                                $data['school_class_id'],
+                                $data['section_id'] ?? null,
+                                $data['exam_id'],
+                                $data['subject_id']
+                            ),
+                            $fileName
+                        );
+                    }),
+
+                // 🌟 2. IMPORT MARKS EXCEL BUTTON
+                Tables\Actions\Action::make('import_marks_excel')
+                    ->label('Import Marks Excel')
+                    ->icon('heroicon-o-arrow-up-tray')
+                    ->color('success')
+                    ->modalHeading('Upload Marks Excel File')
+                    ->form([
+                        Forms\Components\FileUpload::make('attachment')
+                            ->label('Excel File (.xlsx)')
+                            ->disk('local')
+                            ->directory('imports')
+                            ->acceptedFileTypes(['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/csv'])
+                            ->required(),
+                    ])
+                    ->action(function (array $data) {
+                        $filePath = $data['attachment'];
+
+                        Excel::import(new MarksImport, $filePath, 'local');
+                        \Illuminate\Support\Facades\Storage::disk('local')->delete($filePath);
+
+                        \Filament\Notifications\Notification::make()
+                            ->title('Marks Uploaded Successfully!')
+                            ->body('All student marks have been imported and updated.')
+                            ->success()
+                            ->send();
+                    }),
+
                 Tables\Actions\Action::make('generate_mark_sheet')
                     ->label('Generate Mark Sheet')
                     ->icon('heroicon-o-document-plus')
@@ -431,7 +556,6 @@ class MarkResource extends Resource
                             ->send();
                     }),
 
-                // 🌟 NEW DETACH SUBJECT MARKS ACTION 🌟
                 Tables\Actions\Action::make('detach_subject_marks')
                     ->label('Detach Subject Marks')
                     ->icon('heroicon-o-trash')

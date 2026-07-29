@@ -5,12 +5,38 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Mid Term Mark Sheet - {{ $enrollment->user->name }}</title>
 @php
-    $settings = \App\Models\SiteSetting::first();
-    
-    // 🌟 ADDED: Logic to determine if class is junior or senior
+    $settings = \App\Models\SiteSetting::first() ?? \App\Models\Setting::first();
+
+    // 🌟 DYNAMIC LOGO FETCH 🌟
+    $logoUrl = ($settings && !empty($settings->logo))
+        ? \Illuminate\Support\Facades\Storage::url($settings->logo)
+        : null;
+
+    $schoolName = !empty($settings?->school_name_en)
+        ? $settings->school_name_en
+        : 'Shankarbati High School';
+
+    $schoolAddress = !empty($settings?->address_en)
+        ? $settings->address_en
+        : 'Chapai Nawabganj, Bangladesh';
+
+        // 🌟 DYNAMIC STUDENT PHOTO FETCH 🌟
+            $studentPhoto = null;
+            $rawPhotoPath = $enrollment->user->avatar ?? $enrollment->user->photo ?? null;
+
+            if ($rawPhotoPath) {
+                $fullPath = storage_path('app/public/' . $rawPhotoPath);
+                if (file_exists($fullPath)) {
+                    $studentPhoto = $fullPath;
+                } else {
+                    $studentPhoto = \Illuminate\Support\Facades\Storage::url($rawPhotoPath);
+                }
+            }
+
+    // Logic to determine if class is junior or senior
     $className = strtolower($enrollment->schoolClass->name ?? '');
     $has4thSubjectColumn = str_contains($className, '9') || str_contains($className, '10');
-    
+
     // 1. Helper functions
     $getGrade = function($perc) {
         if($perc >= 80) return 'A+';
@@ -42,32 +68,31 @@
         return ($highest !== null && $highest > 0) ? number_format($highest, 1) : '--';
     };
 
-    // 🌟 FIXED: Just return the exact name from the database!
     $formatSubjectWithCode = function($subjectModel) {
-        return $subjectModel->name; 
+        return $subjectModel->name;
     };
 
     // --- 2. SINGLE TERM CUMULATIVE WEIGHTAGE ---
     $childExams = \App\Models\Exam::where('parent_exam_id', $exam->id)->get();
-    
+
     if ($childExams->count() > 0) {
         $childrenTotalWeight = $childExams->sum('contribution_percentage');
-        $mainExamWeight = 100 - $childrenTotalWeight; 
+        $mainExamWeight = 100 - $childrenTotalWeight;
 
         foreach($marks as $mark) {
             $cumulativeObtained = 0;
             $r = $mark->subject->getMarksForExam($exam->id);
             $mainMax = $r['full_marks'] > 0 ? $r['full_marks'] : 100;
-            
+
             $mainWeighted = $mainMax > 0 ? ($mark->marks_obtained / $mainMax) * ($mainMax * ($mainExamWeight / 100)) : 0;
             $cumulativeObtained += $mainWeighted;
-            
+
             foreach($childExams as $childExam) {
                 $childMark = \App\Models\Mark::where('exam_id', $childExam->id)
                     ->where('student_id', $mark->student_id)
                     ->where('subject_id', $mark->subject_id)
                     ->first();
-                    
+
                 if ($childMark) {
                     $cRules = $childMark->subject->getMarksForExam($childExam->id);
                     $childMax = $cRules['full_marks'] > 0 ? $cRules['full_marks'] : 100;
@@ -126,7 +151,7 @@
         } else {
             $perc = $max1 > 0 ? ($mark->marks_obtained / $max1) * 100 : 0;
             $gpa = $getGPA($perc);
-            
+
             $groupedMarks[] = [
                 'is_combined' => false,
                 'subject_model' => $mark->subject,
@@ -138,7 +163,7 @@
             $processedIds[] = $mark->id;
         }
     }
-    
+
     $totalMax = $marks->sum(function($m) use ($exam) {
         $r = $m->subject->getMarksForExam($exam->id);
         return $r['full_marks'] > 0 ? $r['full_marks'] : 100;
@@ -169,7 +194,7 @@
 
     $coreCount = count($coreGPAs);
     $gpaWithout4th = ($hasCoreFail || $coreCount === 0) ? '0.00' : number_format(array_sum($coreGPAs) / $coreCount, 2);
-    
+
     $gpaWith4th = '0.00';
     if (!$hasFailed && count($groupedMarks) > 0) {
         $rawGpaSum = 0;
@@ -200,6 +225,34 @@
     if ($rankIndex !== false) {
         $meritPosition = $rankIndex + 1;
     }
+
+    // --- 🌟 6. GENERATE QR CODE PAYLOAD 🌟 ---
+    // ✅ AFTER (Calculates grade strictly from Final GPA):
+    $finalGPA = $has4thSubjectColumn ? $gpaWith4th : $gpaWithout4th;
+
+    $getGradeFromGPA = function($gpaVal, $hasFailed) {
+        if ($hasFailed || (float)$gpaVal < 1.00) return 'F';
+        $g = (float)$gpaVal;
+        if ($g >= 5.00) return 'A+';
+        if ($g >= 4.00) return 'A';
+        if ($g >= 3.50) return 'A-';
+        if ($g >= 3.00) return 'B';
+        if ($g >= 2.00) return 'C';
+        if ($g >= 1.00) return 'D';
+        return 'F';
+    };
+
+    $finalGrade = $getGradeFromGPA($finalGPA, $hasFailed);
+
+    $qrPayload = "User ID: " . ($enrollment->user->student_id ?? 'N/A') . "\n"
+        . "Name: " . strtoupper($enrollment->user->name) . "\n"
+        . "Class: " . $enrollment->schoolClass->name . "\n"
+        . "Roll: " . $enrollment->roll_number . "\n"
+        . "Grand Total: " . number_format($totalObtained, 1) . "\n"
+        . "GPA: " . $finalGPA . "\n"
+        . "Grade: " . $finalGrade;
+
+    $qrCodeUrl = "https://api.qrserver.com/v1/create-qr-code/?size=110x110&data=" . urlencode($qrPayload);
 @endphp
 
 <html>
@@ -248,10 +301,11 @@
             padding: 0 10px;
         }
         .school-logo {
-            width: 45px;
-            height: 45px;
+            width: 50px;
+            height: 50px;
+            object-fit: contain;
             margin: 0 auto 4px auto;
-            border-radius: 50%;
+            display: block;
         }
         .school-logo-fallback {
             width: 40px;
@@ -318,7 +372,7 @@
         }
         .info-col-table td {
             padding: 3.5px 2px;
-            font-size: 12px;
+            font-size: 10px;
             vertical-align: baseline;
         }
         .info-label {
@@ -363,6 +417,16 @@
             border-top: 1px solid #000;
             border-bottom: 1px solid #000;
         }
+
+        .table-transcript-grid .grand-total-row td {
+            background: #e2e8f0 !important;
+            font-weight: 800 !important;
+            font-size: 11px !important;
+            border-top: 2.5px solid #000 !important;
+            border-bottom: 2.5px solid #000 !important;
+            padding: 6px 2px !important;
+        }
+
         .right-side-merged-cell {
             font-size: 13px;
             font-weight: bold;
@@ -375,7 +439,7 @@
             table-layout: fixed;
         }
         .summary-block-matrix td {
-            border: 1px solid #333 !important; 
+            border: 1px solid #333 !important;
             padding: 5px 10px;
             font-size: 11.5px;
         }
@@ -384,7 +448,7 @@
             font-weight: bold;
             width: 145px;
         }
-        .comment-field-box {
+        .comments-box {
             border: 1px solid #333;
             padding: 8px;
             font-size: 12px;
@@ -423,6 +487,29 @@
         .highlight-blue { color: #1565c0; font-weight: 700; }
         .highlight-teal { color: #00897b; font-weight: 700; }
         .grade-f { color: #dc2626; font-weight: bold; }
+
+        /* 🌟 QR CODE BOX STYLING 🌟 */
+        .qr-code-wrapper {
+            border: 1.5px solid #333;
+            padding: 4px;
+            background: #fff;
+            display: inline-block;
+            text-align: center;
+        }
+        .qr-code-img {
+            width: 95px;
+            height: 95px;
+            display: block;
+            margin: 0 auto;
+        }
+        .qr-caption {
+            font-size: 8px;
+            font-weight: bold;
+            color: #333;
+            margin-top: 3px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
     </style>
 </head>
 <body>
@@ -432,19 +519,23 @@
 
     <table class="layout-table" style="margin-bottom: 10px;">
       <tr>
-        <td style="width: 85px;">
-          <div class="student-photo">
-            Paste<br>Photo<br>Here
-          </div>
-        </td>
-        <td class="school-info">
-          @if(file_exists(public_path('images/logo.png')))
-              <img src="{{ public_path('images/logo.png') }}" class="school-logo" alt="Logo">
+      <!-- ✅ AFTER: Dynamic Student Photo with Fallback -->
+      <td style="width: 70px;">
+          @if(!empty($studentPhoto))
+              <img src="{{ $studentPhoto }}" alt="Student Photo" style="width: 65px; height: 75px; object-fit: cover; border: 1px solid #333; display: block;">
           @else
-              <div class="school-logo-fallback">H</div>
+              <div class="photo-box">Paste<br>Photo<br>Here</div>
           @endif
-          <div class="school-name">{{ $settings->school_name_en ?? 'Harimohan Govt. High School' }}</div>
-          <div class="school-address">{{ $settings->address_en ?? 'New Market, Chapai Nawabganj' }}</div>
+      </td>
+        <td class="school-info">
+          @if(!empty($logoUrl))
+              <img src="{{ $logoUrl }}" class="school-logo" alt="Logo">
+          @else
+              <div class="school-logo-fallback">{{ substr($schoolName, 0, 1) }}</div>
+          @endif
+
+          <div class="school-name">{{ $schoolName }}</div>
+          <div class="school-address">{{ $schoolAddress }}</div>
           <div class="sheet-title">{{ $exam->name ?? 'Mid Term' }} Mark Sheet</div>
           <div class="academic-year">Academic Year: {{ $enrollment->academicYear->name }}</div>
         </td>
@@ -469,7 +560,7 @@
 
     <table class="layout-table" style="margin-top: 15px; margin-bottom: 10px;">
       <tr>
-        <td style="width: 49%;">
+        <td style="width: 41%;">
           <table class="info-col-table">
             <tr><td class="info-label">Student Name:</td><td class="info-value">{{ strtoupper($enrollment->user->name) }}</td></tr>
             <tr><td class="info-label">Father's Name:</td><td class="info-value">_______________________</td></tr>
@@ -480,7 +571,7 @@
           </table>
         </td>
         <td style="width: 2%;"></td>
-        <td style="width: 49%;">
+        <td style="width: 38%;">
           <table class="info-col-table">
             <tr><td class="info-label">Student ID:</td><td class="info-value">{{ $enrollment->user->student_id ?? 'N/A' }}</td></tr>
             <tr><td class="info-label">Shift:</td><td class="info-value">Day</td></tr>
@@ -489,6 +580,12 @@
             <tr><td class="info-label">Department:</td><td class="info-value">{{ ($enrollment->study_group ?? 'General') }}</td></tr>
             <tr><td class="info-label">Exam Year:</td><td class="info-value">{{ $enrollment->academicYear->name }}</td></tr>
           </table>
+        </td>
+        <!-- 🌟 DYNAMIC QR CODE CONTAINER (RED HIGHLIGHTED SPOT) 🌟 -->
+        <td style="width: 19%; text-align: right; vertical-align: middle;">
+          <div class="qr-code-wrapper">
+            <img src="{{ $qrCodeUrl }}" alt="Verification QR Code" class="qr-code-img">
+          </div>
         </td>
       </tr>
     </table>
@@ -504,12 +601,11 @@
           <th colspan="2">COMBINED</th>
           <th rowspan="2" style="width: 5%;">GP</th>
           <th rowspan="2" style="width: 6%;">Grade</th>
-          
-          {{-- 🌟 DYNAMIC HEADER: Hides Without 4th Subject for Classes 6,7,8 --}}
+
           @if($has4thSubjectColumn)
             <th rowspan="2" style="width: 9%;">GPA(Without 4th Subject)</th>
           @endif
-          
+
           <th rowspan="2" style="width: 6%;">GPA</th>
         </tr>
         <tr class="sub-header">
@@ -521,8 +617,8 @@
         </tr>
       </thead>
       <tbody>
-        @php 
-          $hasRenderedSideAggregateBlock = false; 
+        @php
+          $hasRenderedSideAggregateBlock = false;
           $totalSubjectRowsCount = count($coreGroupedMarks) + count(collect($coreGroupedMarks)->where('is_combined', true)) + count($optionalGroupedMarks);
           if(count($optionalGroupedMarks) > 0) { $totalSubjectRowsCount += 1; }
         @endphp
@@ -534,7 +630,7 @@
             $mcqMax = $rules1['mcq_total'] ?? 0;
             $practicalMax = $rules1['practical_total'] ?? 0;
           @endphp
-          
+
           @if($group['is_combined'])
             @php
               $rules2 = $group['paper2']->subject->getMarksForExam($exam->id);
@@ -548,20 +644,19 @@
               <td>{{ $mcqMax > 0 ? $mcqMax : '--' }}</td><td>{{ $mcqMax > 0 ? number_format($group['paper1']->mcq_mark, 1) : '0.0' }}</td>
               <td>{{ $practicalMax > 0 ? $practicalMax : '--' }}</td><td>{{ $practicalMax > 0 ? number_format($group['paper1']->practical_mark, 1) : '0.0' }}</td>
               <td>{{ number_format($group['paper1']->marks_obtained, 1) }}</td>
-              
+
               <td rowspan="2">{{ number_format($group['combined_max'], 0) }}</td>
               <td rowspan="2" style="font-weight: bold;">{{ number_format($group['combined_obt'], 1) }}</td>
               <td rowspan="2" style="font-weight: bold;" class="highlight-green">{{ $group['gpa'] }}</td>
               <td rowspan="2" style="font-weight: bold;" class="highlight-green">{{ $group['combined_grade'] }}</td>
 
               @if(!$hasRenderedSideAggregateBlock)
-                {{-- 🌟 DYNAMIC DATA CELLS: Applies the correct GPA output --}}
                 @if($has4thSubjectColumn)
-                  <td rowspan="{{ $totalSubjectRowsCount + 1 }}" class="right-side-merged-cell highlight-blue" style="border-left: 1.5px solid #333;">
+                  <td rowspan="{{ $totalSubjectRowsCount }}" class="right-side-merged-cell highlight-blue" style="border-left: 1.5px solid #333;">
                     {{ $gpaWithout4th }}
                   </td>
                 @endif
-                <td rowspan="{{ $totalSubjectRowsCount + 1 }}" class="right-pinned-gpa-cell right-side-merged-cell highlight-teal" style="{{ !$has4thSubjectColumn ? 'border-left: 1.5px solid #333;' : '' }}">
+                <td rowspan="{{ $totalSubjectRowsCount }}" class="right-pinned-gpa-cell right-side-merged-cell highlight-teal" style="{{ !$has4thSubjectColumn ? 'border-left: 1.5px solid #333;' : '' }}">
                   {{ $has4thSubjectColumn ? $gpaWith4th : $gpaWithout4th }}
                 </td>
                 @php $hasRenderedSideAggregateBlock = true; @endphp
@@ -581,19 +676,18 @@
               <td>{{ $mcqMax > 0 ? $mcqMax : '--' }}</td><td>{{ $mcqMax > 0 ? number_format($group['paper1']->mcq_mark, 1) : '0.0' }}</td>
               <td>{{ $practicalMax > 0 ? $practicalMax : '--' }}</td><td>{{ $practicalMax > 0 ? number_format($group['paper1']->practical_mark, 1) : '0.0' }}</td>
               <td>{{ number_format($group['paper1']->marks_obtained, 1) }}</td>
-              
+
               <td>{{ number_format($group['max1'], 0) }}</td><td>{{ number_format($group['paper1']->marks_obtained, 1) }}</td>
               <td style="font-weight: bold;">{{ $group['gpa'] }}</td>
               <td style="font-weight: bold;" class="{{ $group['combined_grade'] === 'F' ? 'grade-f' : 'highlight-green' }}">{{ $group['combined_grade'] }}</td>
 
               @if(!$hasRenderedSideAggregateBlock)
-                {{-- 🌟 DYNAMIC DATA CELLS: Applies the correct GPA output --}}
                 @if($has4thSubjectColumn)
-                  <td rowspan="{{ $totalSubjectRowsCount + 1 }}" class="right-side-merged-cell highlight-blue" style="border-left: 1.5px solid #333;">
+                  <td rowspan="{{ $totalSubjectRowsCount }}" class="right-side-merged-cell highlight-blue" style="border-left: 1.5px solid #333;">
                     {{ $gpaWithout4th }}
                   </td>
                 @endif
-                <td rowspan="{{ $totalSubjectRowsCount + 1 }}" class="right-pinned-gpa-cell right-side-merged-cell highlight-teal" style="{{ !$has4thSubjectColumn ? 'border-left: 1.5px solid #333;' : '' }}">
+                <td rowspan="{{ $totalSubjectRowsCount }}" class="right-pinned-gpa-cell right-side-merged-cell highlight-teal" style="{{ !$has4thSubjectColumn ? 'border-left: 1.5px solid #333;' : '' }}">
                   {{ $has4thSubjectColumn ? $gpaWith4th : $gpaWithout4th }}
                 </td>
                 @php $hasRenderedSideAggregateBlock = true; @endphp
@@ -619,7 +713,7 @@
               <td>{{ $mcqMax > 0 ? $mcqMax : '--' }}</td><td>{{ $mcqMax > 0 ? number_format($group['paper1']->mcq_mark, 1) : '0.0' }}</td>
               <td>{{ $practicalMax > 0 ? $practicalMax : '--' }}</td><td>{{ $practicalMax > 0 ? number_format($group['paper1']->practical_mark, 1) : '0.0' }}</td>
               <td>{{ number_format($group['paper1']->marks_obtained, 1) }}</td>
-              
+
               <td>{{ number_format($group['max1'], 0) }}</td><td>{{ number_format($group['paper1']->marks_obtained, 1) }}</td>
               <td style="font-weight: bold;">{{ $group['gpa'] }}</td>
               <td style="font-weight: bold;" class="{{ $group['combined_grade'] === 'F' ? 'grade-f' : 'highlight-green' }}">{{ $group['combined_grade'] }}</td>
@@ -627,14 +721,13 @@
           @endforeach
         @endif
 
-        @php $finalGrade = $hasFailed ? 'F' : $getGrade($totalMax > 0 ? ($totalObtained / $totalMax) * 100 : 0); @endphp
-        <tr class="grand-total">
-          <td class="subject-name">Grand Total / Grade</td>
+        <tr class="grand-total-row">
+          <td class="subject-name" style="text-align: left; padding-left: 8px;">Grand Total / Grade</td>
           <td colspan="6"></td>
-          <td>{{ number_format($totalObtained, 1) }}</td>
+          <td style="font-weight: 900; font-size: 11px;">{{ number_format($totalObtained, 1) }}</td>
           <td colspan="2"></td>
           <td>--</td>
-          <td class="highlight-green">{{ $finalGrade }}</td>
+          <td class="{{ $finalGrade === 'F' ? 'grade-f' : 'highlight-green' }}" style="font-size: 12px; font-weight: 900;">{{ $finalGrade }}</td>
         </tr>
       </tbody>
     </table>
@@ -660,7 +753,7 @@
     </table>
 
     <div class="comments-box">
-      <div class="comments-label">Comments / Remarks:</div>
+      <div style="font-weight: bold; color: #333;">Comments / Remarks:</div>
     </div>
 
     <table class="signatures-table">
