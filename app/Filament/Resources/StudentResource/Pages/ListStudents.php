@@ -56,8 +56,8 @@ class ListStudents extends ListRecords
                     $class = SchoolClass::find($data['school_class_id']);
                     $section = !empty($data['section_id']) ? Section::find($data['section_id']) : null;
 
-                    $className = $class ? str_replace(' ', '_', $class->name) : 'Class';
-                    $sectionName = $section ? '_' . $section->name : '';
+                    $className = $class ? str_replace([' ', '/', '\\'], '_', $class->name) : 'Class';
+                    $sectionName = $section ? '_' . str_replace([' ', '/', '\\'], '_', $section->name) : '';
 
                     $fileName = "Student_Import_Template_{$className}{$sectionName}.xlsx";
 

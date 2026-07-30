@@ -12,6 +12,7 @@ use App\Models\TeacherAllocation;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Forms\Get;
+use Filament\Forms\Set;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Tables;
@@ -47,12 +48,22 @@ class EnrollmentResource extends Resource
                 Forms\Components\Select::make('school_class_id')
                     ->relationship('schoolClass', 'name')
                     ->label('Class')
-                    ->required(),
+                    ->required()
+                    ->live() // 👈 This makes the form react immediately when the class changes
+                    ->afterStateUpdated(fn (Set $set) => $set('section_id', null)), // 👈 Clears the section dropdown when class changes
 
                 Forms\Components\Select::make('section_id')
-                    ->relationship('section', 'name')
                     ->label('Section')
-                    ->nullable(),
+                    ->relationship(
+                        name: 'section', 
+                        titleAttribute: 'name',
+                        modifyQueryUsing: fn (Builder $query, Get $get) => $query->whereHas(
+                            'schoolClasses', // 👈 This filters Sections to only those linked to the chosen Class
+                            fn (Builder $q) => $q->where('school_classes.id', $get('school_class_id'))
+                        )
+                    )
+                    ->searchable()
+                    ->preload(),
 
                 Forms\Components\TextInput::make('roll_number')
                     ->label('Roll Number')

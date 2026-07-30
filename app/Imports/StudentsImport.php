@@ -13,6 +13,9 @@ use Carbon\Carbon;
 
 class StudentsImport implements ToModel, WithHeadingRow
 {
+    // Property to keep track of the ID across all rows in the Excel file
+    private $nextStudentId = null;
+
     public function model(array $row)
     {
         // Support both old 'student_name' and new 'student_name_en' column names
@@ -32,9 +35,26 @@ class StudentsImport implements ToModel, WithHeadingRow
         $class = SchoolClass::where('name', $row['class_name'] ?? '')->first();
         $section = Section::where('name', $row['section_name'] ?? '')->first();
 
-        // 3. Format Roll Number into numeric Student ID (e.g., 20260103)
+        // 3. Generate sequential numeric Student ID safely
+        if ($this->nextStudentId === null) {
+            // Find the absolute highest student ID in the database starting with the current year
+            $lastUser = User::where('type', 'student')
+                ->where('student_id', 'like', $yearName . '%')
+                ->orderByRaw('CAST(student_id AS UNSIGNED) DESC')
+                ->first();
+
+            if ($lastUser && $lastUser->student_id) {
+                $this->nextStudentId = ((int) $lastUser->student_id) + 1;
+            } else {
+                $this->nextStudentId = (int) ($yearName . '0001');
+            }
+        }
+
+        // Assign the ID and increment for the next row
+        $studentId = $this->nextStudentId;
+        $this->nextStudentId++;
+
         $rollNumber = trim($row['roll_number']);
-        $studentId = $yearName . sprintf('%04d', $rollNumber);
 
         // 4. Format Date of Birth safely
         $dob = null;
@@ -64,7 +84,7 @@ class StudentsImport implements ToModel, WithHeadingRow
         $user = User::create([
             'name'                 => $studentName,
             'name_bn'              => $row['student_name_bn'] ?? null,
-            'student_id'           => $studentId, // Pure numeric ID (20260103)
+            'student_id'           => $studentId, // Unique sequential numeric ID
             'religion'             => !empty($row['religion']) ? ucfirst(strtolower(trim($row['religion']))) : null,
             'birth_reg_no'         => $row['birth_reg_no'] ?? null,
             'phone'                => $formatPhone($row['phone'] ?? null),
