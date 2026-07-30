@@ -455,6 +455,32 @@
                 font-weight: 800 !important;
                 line-height: 1.15 !important;
             }
+
+            /* Kill any Filament overlay/backdrop layers left in the DOM */
+            .fi-sidebar-close-overlay,
+            .fi-modal-close-overlay,
+            .fi-modal-overlay,
+            .fi-modal,
+            .fi-dropdown-panel,
+            [x-show="sidebarOpen"],
+            div[class*="overlay"],
+            div[class*="backdrop"] {
+                display: none !important;
+            }
+
+            /* Force light mode even if <html> has the dark class */
+            html.dark,
+            html.dark body,
+            .dark {
+                background-color: #ffffff !important;
+                color-scheme: light !important;
+            }
+
+            /* Belt-and-braces: nothing should paint gray behind the page */
+            * {
+                box-shadow: none !important;
+            }
+            
         }
     </style>
 </x-filament-panels::page>
