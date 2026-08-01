@@ -3,12 +3,14 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Filament\Models\Contracts\FilamentUser;
+use Filament\Panel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Spatie\Permission\Traits\HasRoles;
 
-class User extends Authenticatable
+class User extends Authenticatable implements FilamentUser
 {
     use HasFactory, Notifiable, HasRoles;
 
@@ -62,7 +64,18 @@ class User extends Authenticatable
         ];
     }
 
-    // --- AUTO GENERATE STUDENT ID ---
+    /**
+     * Determine if the user can access the Filament panel.
+     */
+    public function canAccessPanel(Panel $panel): bool
+    {
+        // Super admins, admins, teachers, and users with assigned roles can access
+        return $this->hasAnyRole(['super_admin', 'panel_user', 'teacher']) 
+            || in_array($this->type, ['super_admin', 'admin', 'teacher'])
+            || $this->roles()->count() > 0;
+    }
+
+    // --- AUTO GENERATE STUDENT ID & SYNC SPATIE ROLES ---
     protected static function boot()
     {
         parent::boot();
@@ -84,6 +97,15 @@ class User extends Authenticatable
 
                     $user->student_id = $year . str_pad($sequence, 4, '0', STR_PAD_LEFT);
                 }
+            }
+        });
+
+        // Automatically assign Spatie Role based on user type if created/updated
+        static::saved(function ($user) {
+            if ($user->type && !$user->hasRole($user->type)) {
+                // Ensure role exists before assigning
+                \Spatie\Permission\Models\Role::firstOrCreate(['name' => $user->type]);
+                $user->assignRole($user->type);
             }
         });
     }
