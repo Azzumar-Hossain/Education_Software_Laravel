@@ -5,12 +5,15 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\SubjectResource\Pages;
 use App\Models\StudyGroup;
 use App\Models\Subject;
+use App\Models\SchoolClass;
+use App\Models\TeacherAllocation;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Filament\Tables\Filters\SelectFilter;
+use Illuminate\Database\Eloquent\Builder;
 
 class SubjectResource extends Resource
 {
@@ -22,7 +25,7 @@ class SubjectResource extends Resource
 
     public static function shouldRegisterNavigation(): bool
     {
-        return false;
+        return true;
     }
 
     public static function form(Form $form): Form
@@ -43,7 +46,18 @@ class SubjectResource extends Resource
 
                         Forms\Components\Select::make('linked_subject_id')
                             ->label('Combine With (Partner Subject)')
-                            ->options(\App\Models\Subject::pluck('name', 'id'))
+                            ->options(function () {
+                                $user = auth()->user();
+                                $query = Subject::query();
+
+                                if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
+                                    $allocatedSubjectIds = TeacherAllocation::where('user_id', $user->id)
+                                        ->pluck('subject_id');
+                                    $query->whereIn('id', $allocatedSubjectIds);
+                                }
+
+                                return $query->pluck('name', 'id');
+                            })
                             ->searchable()
                             ->placeholder('Select partner (e.g., English 2nd Paper)')
                             ->helperText('Merging? Select the 2nd paper here.')
@@ -59,7 +73,7 @@ class SubjectResource extends Resource
                                 Forms\Components\TextInput::make('name')->required(),
                             ])
                             ->createOptionUsing(function (array $data): int {
-                                return \App\Models\StudyGroup::create($data)->id;
+                                return StudyGroup::create($data)->id;
                             }),
 
                         Forms\Components\Select::make('type')
@@ -84,7 +98,6 @@ class SubjectResource extends Resource
                         Forms\Components\TextInput::make('practical_total')->label('Practical Total (0 if none)')->numeric()->default(0),
                         Forms\Components\TextInput::make('practical_pass_mark')->label('Practical Pass (0 if none)')->numeric()->default(0),
 
-                        // 🌟 ADDED: OVERALL PASS RULE TOGGLE AND THRESHOLD INPUT 🌟
                         Forms\Components\Toggle::make('overall_pass_only')
                             ->label('Overall Pass Rule (Combined Total)')
                             ->helperText('If enabled, student passes as long as Total Marks >= Pass Mark (e.g., 33/100 or 17/50), ignoring separate Written/MCQ limits.')
@@ -163,10 +176,26 @@ class SubjectResource extends Resource
             ->filters([
                 SelectFilter::make('school_class_id')
                     ->label('Filter by Class')
-                    ->relationship('schoolClasses', 'name')
+                    ->options(function () {
+                        $user = auth()->user();
+
+                        if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
+                            $allocatedClassIds = TeacherAllocation::where('user_id', $user->id)
+                                ->pluck('school_class_id');
+                            return SchoolClass::whereIn('id', $allocatedClassIds)->pluck('name', 'id');
+                        }
+
+                        return SchoolClass::pluck('name', 'id');
+                    })
+                    ->query(function (Builder $query, array $data): Builder {
+                        if (empty($data['value'])) return $query;
+                        
+                        return $query->whereHas('schoolClasses', function ($q) use ($data) {
+                            $q->where('school_classes.id', $data['value']);
+                        });
+                    })
                     ->searchable()
-                    ->preload()
-                    ->multiple(),
+                    ->preload(),
             ])
             ->actions([
                 Tables\Actions\EditAction::make(),
@@ -177,6 +206,23 @@ class SubjectResource extends Resource
                     Tables\Actions\DeleteBulkAction::make(),
                 ])
             ]);
+    }
+
+    public static function getEloquentQuery(): Builder
+    {
+        $query = parent::getEloquentQuery();
+        $user = auth()->user();
+
+        // Teachers can only view/edit subjects explicitly assigned to them
+        if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
+            $allocatedSubjectIds = TeacherAllocation::where('user_id', $user->id)
+                ->pluck('subject_id')
+                ->unique();
+
+            return $query->whereIn('id', $allocatedSubjectIds);
+        }
+
+        return $query;
     }
 
     public static function getRelations(): array

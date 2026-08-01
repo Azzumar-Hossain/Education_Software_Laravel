@@ -130,12 +130,19 @@ class MarkResource extends Resource
                         ->schema([
                             Forms\Components\Select::make('academic_year_id')
                                 ->label('Year')
-                                ->options(\App\Models\AcademicYear::pluck('name', 'id'))
+                                ->options(AcademicYear::pluck('name', 'id'))
                                 ->live(),
                                 
                             Forms\Components\Select::make('school_class_id')
                                 ->label('Class')
-                                ->options(\App\Models\SchoolClass::pluck('name', 'id'))
+                                ->options(function () {
+                                    $user = auth()->user();
+                                    if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
+                                        $classIds = TeacherAllocation::where('user_id', $user->id)->pluck('school_class_id');
+                                        return SchoolClass::whereIn('id', $classIds)->pluck('name', 'id');
+                                    }
+                                    return SchoolClass::pluck('name', 'id');
+                                })
                                 ->live()
                                 ->afterStateUpdated(function (Forms\Set $set) {
                                     $set('exam_id', null);
@@ -149,7 +156,7 @@ class MarkResource extends Resource
                                 ->options(function (Forms\Get $get) {
                                     $classId = $get('school_class_id');
                                     if (!$classId) return [];
-                                    return \App\Models\Exam::where('school_class_id', $classId)->pluck('name', 'id');
+                                    return Exam::where('school_class_id', $classId)->pluck('name', 'id');
                                 })
                                 ->live(),
 
@@ -158,8 +165,20 @@ class MarkResource extends Resource
                                 ->options(function (Forms\Get $get) {
                                     $classId = $get('school_class_id');
                                     if (!$classId) return [];
-                                    $class = \App\Models\SchoolClass::with('sections')->find($classId);
-                                    return $class ? $class->sections->pluck('name', 'id') : [];
+                                    
+                                    $user = auth()->user();
+                                    $sectionsQuery = Section::where('school_class_id', $classId);
+                                    if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
+                                        $sectionIds = TeacherAllocation::where('user_id', $user->id)
+                                            ->where('school_class_id', $classId)
+                                            ->whereNotNull('section_id')
+                                            ->pluck('section_id');
+                                            
+                                        if ($sectionIds->isNotEmpty()) {
+                                            $sectionsQuery->whereIn('id', $sectionIds);
+                                        }
+                                    }
+                                    return $sectionsQuery->pluck('name', 'id');
                                 })
                                 ->live(),
 
@@ -180,12 +199,21 @@ class MarkResource extends Resource
                                     
                                     if (!$classId) return [];
 
+                                    $user = auth()->user();
                                     $studyGroup = \App\Models\StudyGroup::where('name', $groupName)->first();
                                     $studyGroupId = $studyGroup?->id;
 
-                                    $query = \App\Models\Subject::whereHas('schoolClasses', function ($q) use ($classId) {
+                                    $query = Subject::whereHas('schoolClasses', function ($q) use ($classId) {
                                         $q->where('school_classes.id', $classId);
                                     });
+
+                                    // Teacher Restriction Scope
+                                    if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
+                                        $subjectIds = TeacherAllocation::where('user_id', $user->id)
+                                            ->where('school_class_id', $classId)
+                                            ->pluck('subject_id');
+                                        $query->whereIn('id', $subjectIds);
+                                    }
 
                                     if (blank($groupName)) {
                                         $subjects = $query->whereNull('study_group_id')->get();
@@ -210,7 +238,7 @@ class MarkResource extends Resource
                             ->when($data['section_id'] ?? null, fn($q, $v) => $q->where('section_id', $v))
                             
                             ->when($data['subject_id'] ?? null, function ($q, $subjectId) {
-                                $subject = \App\Models\Subject::find($subjectId);
+                                $subject = Subject::find($subjectId);
                                 if (!$subject) return $q->where('subject_id', $subjectId);
 
                                 return $q->where('subject_id', $subjectId)
@@ -255,7 +283,7 @@ class MarkResource extends Resource
             ], layout: Tables\Enums\FiltersLayout::AboveContent)
             
             ->headerActions([
-                // 🌟 1. DOWNLOAD MARKS EXCEL TEMPLATE BUTTON (WITH GENERATION GUARD)
+                // 🌟 1. DOWNLOAD MARKS EXCEL TEMPLATE BUTTON
                 Tables\Actions\Action::make('download_marks_template')
                     ->label('Download Template')
                     ->icon('heroicon-o-document-arrow-down')
@@ -271,7 +299,14 @@ class MarkResource extends Resource
 
                             Forms\Components\Select::make('school_class_id')
                                 ->label('Class')
-                                ->options(SchoolClass::pluck('name', 'id'))
+                                ->options(function () {
+                                    $user = auth()->user();
+                                    if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
+                                        $classIds = TeacherAllocation::where('user_id', $user->id)->pluck('school_class_id');
+                                        return SchoolClass::whereIn('id', $classIds)->pluck('name', 'id');
+                                    }
+                                    return SchoolClass::pluck('name', 'id');
+                                })
                                 ->required()
                                 ->live()
                                 ->afterStateUpdated(function (Forms\Set $set) {
@@ -285,8 +320,7 @@ class MarkResource extends Resource
                                 ->options(function (Forms\Get $get) {
                                     $classId = $get('school_class_id');
                                     if (!$classId) return [];
-                                    $class = SchoolClass::with('sections')->find($classId);
-                                    return $class ? $class->sections->pluck('name', 'id') : [];
+                                    return Section::where('school_class_id', $classId)->pluck('name', 'id');
                                 })
                                 ->placeholder('All Sections')
                                 ->live(),
@@ -302,16 +336,27 @@ class MarkResource extends Resource
 
                             Forms\Components\Select::make('subject_id')
                                 ->label('Subject')
-                                ->options(fn (Forms\Get $get) => $get('school_class_id')
-                                    ? Subject::whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $get('school_class_id')))->pluck('name', 'id')
-                                    : Subject::pluck('name', 'id')
-                                )
+                                ->options(function (Forms\Get $get) {
+                                    $classId = $get('school_class_id');
+                                    if (!$classId) return [];
+                                    
+                                    $query = Subject::whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $classId));
+                                    $user = auth()->user();
+                                    
+                                    if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
+                                        $subjectIds = TeacherAllocation::where('user_id', $user->id)
+                                            ->where('school_class_id', $classId)
+                                            ->pluck('subject_id');
+                                        $query->whereIn('id', $subjectIds);
+                                    }
+                                    
+                                    return $query->pluck('name', 'id');
+                                })
                                 ->searchable()
                                 ->required(),
                         ]),
                     ])
                     ->action(function (array $data) {
-                        // 🛑 GUARD CHECK: Ensure Mark Sheets have been generated first!
                         $existingMarksCount = Mark::where('academic_year_id', $data['academic_year_id'])
                             ->where('school_class_id', $data['school_class_id'])
                             ->where('exam_id', $data['exam_id'])
@@ -389,7 +434,14 @@ class MarkResource extends Resource
                             
                         Forms\Components\Select::make('school_class_id')
                             ->label('Class')
-                            ->options(SchoolClass::pluck('name', 'id'))
+                            ->options(function () {
+                                $user = auth()->user();
+                                if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
+                                    $classIds = TeacherAllocation::where('user_id', $user->id)->pluck('school_class_id');
+                                    return SchoolClass::whereIn('id', $classIds)->pluck('name', 'id');
+                                }
+                                return SchoolClass::pluck('name', 'id');
+                            })
                             ->required()
                             ->live() 
                             ->afterStateUpdated(function (Forms\Set $set) {
@@ -414,8 +466,7 @@ class MarkResource extends Resource
                             ->options(function (Forms\Get $get) {
                                 $classId = $get('school_class_id');
                                 if (!$classId) return [];
-                                $class = SchoolClass::with('sections')->find($classId);
-                                return $class ? $class->sections->pluck('name', 'id') : [];
+                                return Section::where('school_class_id', $classId)->pluck('name', 'id');
                             })
                             ->nullable()
                             ->live(),
@@ -438,10 +489,19 @@ class MarkResource extends Resource
                                 $groupName = $get('study_group');
                                 if (!$classId) return [];
 
+                                $user = auth()->user();
                                 $studyGroup = \App\Models\StudyGroup::where('name', $groupName)->first();
                                 $studyGroupId = $studyGroup?->id;
 
                                 $query = Subject::whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $classId));
+
+                                // Teacher restriction scope
+                                if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
+                                    $subjectIds = TeacherAllocation::where('user_id', $user->id)
+                                        ->where('school_class_id', $classId)
+                                        ->pluck('subject_id');
+                                    $query->whereIn('id', $subjectIds);
+                                }
 
                                 if (blank($groupName)) {
                                     $subjects = $query->whereNull('study_group_id')->get();
@@ -572,7 +632,14 @@ class MarkResource extends Resource
 
                         Forms\Components\Select::make('school_class_id')
                             ->label('Class')
-                            ->options(SchoolClass::pluck('name', 'id'))
+                            ->options(function () {
+                                $user = auth()->user();
+                                if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
+                                    $classIds = TeacherAllocation::where('user_id', $user->id)->pluck('school_class_id');
+                                    return SchoolClass::whereIn('id', $classIds)->pluck('name', 'id');
+                                }
+                                return SchoolClass::pluck('name', 'id');
+                            })
                             ->required()
                             ->live()
                             ->afterStateUpdated(function (Forms\Set $set) {
@@ -594,10 +661,19 @@ class MarkResource extends Resource
                             ->label('Select Subject to Detach')
                             ->options(function (Forms\Get $get) {
                                 $classId = $get('school_class_id');
-                                if (!$classId) return Subject::pluck('name', 'id');
+                                if (!$classId) return [];
 
-                                return Subject::whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $classId))
-                                    ->pluck('name', 'id');
+                                $query = Subject::whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $classId));
+                                $user = auth()->user();
+
+                                if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
+                                    $subjectIds = TeacherAllocation::where('user_id', $user->id)
+                                        ->where('school_class_id', $classId)
+                                        ->pluck('subject_id');
+                                    $query->whereIn('id', $subjectIds);
+                                }
+
+                                return $query->pluck('name', 'id');
                             })
                             ->searchable()
                             ->required(),
@@ -641,9 +717,15 @@ class MarkResource extends Resource
         $query = parent::getEloquentQuery();
         $user = auth()->user();
 
-        if ($user->type === 'teacher') {
-            $allocatedClassIds = TeacherAllocation::where('user_id', $user->id)->pluck('school_class_id');
-            return $query->whereIn('school_class_id', $allocatedClassIds);
+        // Strict Scope for Teacher Access Level
+        if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
+            $allocations = TeacherAllocation::where('user_id', $user->id)->get();
+
+            $allocatedClassIds = $allocations->pluck('school_class_id')->unique()->filter();
+            $allocatedSubjectIds = $allocations->pluck('subject_id')->unique()->filter();
+
+            return $query->whereIn('school_class_id', $allocatedClassIds)
+                         ->whereIn('subject_id', $allocatedSubjectIds);
         }
 
         return $query;

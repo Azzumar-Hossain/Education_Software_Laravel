@@ -3,6 +3,9 @@
 namespace App\Filament\Resources;
 
 use App\Models\User;
+use App\Models\Section;
+use App\Models\Subject;
+use App\Models\SchoolClass;
 use App\Filament\Resources\TeacherAllocationResource\Pages;
 use App\Filament\Resources\TeacherAllocationResource\RelationManagers;
 use App\Models\TeacherAllocation;
@@ -40,16 +43,50 @@ class TeacherAllocationResource extends Resource
                 Forms\Components\Select::make('school_class_id')
                     ->relationship('schoolClass', 'name')
                     ->label('Class')
-                    ->required(),
+                    ->required()
+                    ->live() // Listens for class changes immediately
+                    ->afterStateUpdated(function (Forms\Set $set) {
+                        $set('section_id', null);
+                        $set('subject_id', null);
+                    }),
 
                 Forms\Components\Select::make('section_id')
-                    ->relationship('section', 'name')
                     ->label('Section')
-                    ->required(),
+                    ->options(function (Forms\Get $get) {
+                        $classId = $get('school_class_id');
+                        
+                        if (!$classId) {
+                            return [];
+                        }
+
+                        // Fetch the class with its attached sections via relationship
+                        $schoolClass = SchoolClass::with('sections')->find($classId);
+
+                        return $schoolClass ? $schoolClass->sections->pluck('name', 'id') : [];
+                    })
+                    ->live()
+                    ->nullable(),
 
                 Forms\Components\Select::make('subject_id')
-                    ->relationship('subject', 'name')
                     ->label('Subject')
+                    ->options(function (Forms\Get $get) {
+                        $classId = $get('school_class_id');
+                        
+                        if (!$classId) {
+                            return [];
+                        }
+
+                        // Fetch subjects connected to the selected class with code appended
+                        return Subject::whereHas('schoolClasses', function ($query) use ($classId) {
+                            $query->where('school_classes.id', $classId);
+                        })
+                        ->get()
+                        ->mapWithKeys(function ($subject) {
+                            $codeLabel = $subject->code ? " ({$subject->code})" : '';
+                            return [$subject->id => "{$subject->name}{$codeLabel}"];
+                        });
+                    })
+                    ->searchable()
                     ->required(),
             ]);
     }
