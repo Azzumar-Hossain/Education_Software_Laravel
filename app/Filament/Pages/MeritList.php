@@ -8,6 +8,7 @@ use App\Models\Section;
 use App\Models\Enrollment;
 use App\Models\Mark;
 use App\Models\Exam;
+use App\Models\ClassTeacher;
 use Filament\Pages\Page;
 use Filament\Forms\Form;
 use Filament\Forms\Components\Select;
@@ -28,6 +29,21 @@ class MeritList extends Page implements HasForms
 
     public ?array $data = [];
     public $meritRecords = [];
+
+    // 🌟 1. DYNAMIC ACCESS AUTHORIZATION 🌟
+    public static function canAccess(): bool
+    {
+        $user = auth()->user();
+
+        if (!$user) {
+            return false;
+        }
+
+        return $user->type === 'super_admin'
+            || $user->type === 'admin'
+            || $user->hasRole(['super_admin', 'admin', 'class_teacher'])
+            || $user->can('page_MeritList');
+    }
 
     public function mount(): void
     {
@@ -86,7 +102,7 @@ class MeritList extends Page implements HasForms
                                     $set('study_group', null);
                                 }),
 
-                            // 🌟 3. TARGET EXAM (Filtered dynamically by Academic Year & Class) 🌟
+                            // 🌟 3. TARGET EXAM 🌟
                             Select::make('exam_id')
                                 ->label('Target Exam')
                                 ->options(function ($get) {
@@ -99,8 +115,6 @@ class MeritList extends Page implements HasForms
 
                                     $query = Exam::query()->where('academic_year_id', $yearId);
 
-                                    // Filter by class if school_class_id column exists on Exam model,
-                                    // or fetch exams where marks exist for this class & year.
                                     if (\Schema::hasColumn('exams', 'school_class_id')) {
                                         $query->where(function ($q) use ($classId) {
                                             $q->whereNull('school_class_id')
@@ -133,33 +147,54 @@ class MeritList extends Page implements HasForms
 
                                     if (str_contains($className, '9') || str_contains($className, '10')) {
                                         return [
-                                            'class' => 'Class-wise (Full Grade)',
-                                            'group' => 'Group-wise (Stream Focus)',
+                                            'class'   => 'Class-wise (Full Grade)',
+                                            'group'   => 'Group-wise (Stream Focus)',
                                             'section' => 'Section-wise (Classroom Focus)'
                                         ];
                                     }
 
                                     return [
-                                        'class' => 'Class-wise (Full Grade)',
+                                        'class'   => 'Class-wise (Full Grade)',
                                         'section' => 'Section-wise (Classroom Focus)'
                                     ];
                                 })
                                 ->required()
                                 ->live(),
 
-                            // 🌟 5. SELECT SECTION / GROUP 🌟
+                            // 🌟 5. SELECT SECTION (FILTERED FOR CLASS TEACHERS) 🌟
                             Select::make('section_id')
                                 ->label('Select Section')
-                                ->options(fn ($get) => $get('school_class_id') ? Section::whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $get('school_class_id')))->pluck('name', 'id') : [])
+                                ->options(function ($get) {
+                                    $classId = $get('school_class_id');
+                                    if (!$classId) return [];
+
+                                    $user = auth()->user();
+
+                                    // If logged in as Class Teacher, restrict to assigned sections only
+                                    if ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
+                                        $assignedSectionIds = ClassTeacher::where('teacher_id', $user->id)
+                                            ->pluck('section_id')
+                                            ->unique()
+                                            ->filter();
+
+                                        return Section::whereIn('id', $assignedSectionIds)
+                                            ->whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $classId))
+                                            ->pluck('name', 'id');
+                                    }
+
+                                    // Admin / Super Admin view all sections
+                                    return Section::whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $classId))
+                                        ->pluck('name', 'id');
+                                })
                                 ->visible(fn ($get) => $get('merit_scope') === 'section')
                                 ->required(),
 
                             Select::make('study_group')
                                 ->label('Select Group')
                                 ->options([
-                                    'Science' => 'Science',
+                                    'Science'          => 'Science',
                                     'Arts/Humanities' => 'Arts / Humanities',
-                                    'Commerce' => 'Commerce',
+                                    'Commerce'         => 'Commerce',
                                 ])
                                 ->visible(fn ($get) => $get('merit_scope') === 'group')
                                 ->required(),
@@ -332,6 +367,7 @@ class MeritList extends Page implements HasForms
         if ($perc >= 50) return 3.00;
         if ($perc >= 40) return 2.00;
         if ($perc >= 33) return 1.00;
+        if ($perc >= 0)  return 0.00;
         return 0.00;
     }
 

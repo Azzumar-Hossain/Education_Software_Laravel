@@ -22,6 +22,21 @@ class AttendanceResource extends Resource
     protected static ?string $navigationIcon = 'heroicon-o-clipboard-document-check';
     protected static ?string $navigationLabel = 'Daily Attendance';
 
+    // 🌟 ACCESS CONTROL METHOD 🌟
+    //public static function canViewAny(): bool
+    //{
+    //    $user = auth()->user();
+
+    //    if (!$user) {
+    //        return false;
+    //    }
+
+    //    // Admins always see it, otherwise rely ONLY on Shield permissions
+    //    return in_array($user->type, ['super_admin', 'admin']) 
+    //        || $user->hasRole(['super_admin', 'admin'])
+    //        || $user->can('view_any_attendance'); // 👈 Checks Shield permission
+    //}
+
     public static function form(Form $form): Form
     {
         return $form
@@ -227,16 +242,17 @@ class AttendanceResource extends Resource
         $query = parent::getEloquentQuery();
         $user = auth()->user();
 
-        if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
-            $allocations = TeacherAllocation::where('user_id', $user->id)->get();
+        if ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
+            // Fetch class and section IDs assigned in class_teachers table
+            $classTeacherAllocations = \App\Models\ClassTeacher::where('user_id', $user->id)->get();
 
-            $allocatedClassIds = $allocations->pluck('school_class_id')->unique()->filter();
-            $allocatedSectionIds = $allocations->pluck('section_id')->unique()->filter();
+            $assignedClassIds = $classTeacherAllocations->pluck('school_class_id')->unique()->filter();
+            $assignedSectionIds = $classTeacherAllocations->pluck('section_id')->unique()->filter();
 
-            return $query->whereIn('school_class_id', $allocatedClassIds)
-                         ->when($allocatedSectionIds->isNotEmpty(), function ($q) use ($allocatedSectionIds) {
-                             return $q->whereIn('section_id', $allocatedSectionIds);
-                         });
+            return $query->whereIn('school_class_id', $assignedClassIds)
+                        ->when($assignedSectionIds->isNotEmpty(), function ($q) use ($assignedSectionIds) {
+                            $q->whereIn('section_id', $assignedSectionIds);
+                        });
         }
 
         return $query;

@@ -26,6 +26,18 @@ class ReceiptResource extends Resource
     protected static ?string $navigationLabel = 'Fee Collection';
     protected static ?string $navigationGroup = 'Finance';
 
+    // 🌟 ACCESS CONTROL METHOD 🌟
+    //public static function canViewAny(): bool
+    //{
+    //    $user = auth()->user();
+
+    //    if (!$user) return false;
+
+    //    return in_array($user->type, ['super_admin', 'admin', 'class_teacher']) 
+    //        || $user->hasRole('class_teacher')
+    //        || $user->hasPermissionTo('view_any_receipt');
+    //}
+
     // --- SMART DISCOUNT DETECTOR ---
     public static function isDiscountCategory($categoryId): bool
     {
@@ -350,6 +362,34 @@ class ReceiptResource extends Resource
             ])
             ->bulkActions([ Tables\Actions\BulkActionGroup::make([ Tables\Actions\DeleteBulkAction::make() ]) ])
             ->defaultSort('created_at', 'desc');
+    }
+
+    public static function getEloquentQuery(): Builder
+    {
+        $query = parent::getEloquentQuery();
+        $user = auth()->user();
+
+        if ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
+            // 1. Fetch class & section allocations for this class teacher
+            $classTeacherAllocations = \App\Models\ClassTeacher::where('teacher_id', $user->id)->get();
+
+            $assignedClassIds = $classTeacherAllocations->pluck('school_class_id')->unique()->filter();
+            $assignedSectionIds = $classTeacherAllocations->pluck('section_id')->unique()->filter();
+
+            // 2. Fetch enrollment primary keys matching the teacher's allocated class & section
+            $enrollmentIds = \App\Models\Enrollment::whereIn('school_class_id', $assignedClassIds)
+                ->when($assignedSectionIds->isNotEmpty(), function ($q) use ($assignedSectionIds) {
+                    $q->whereIn('section_id', $assignedSectionIds);
+                })
+                ->pluck('id')
+                ->unique()
+                ->filter();
+
+            // 🌟 3. Filter receipts using enrollment_id
+            return $query->whereIn('enrollment_id', $enrollmentIds);
+        }
+
+        return $query;
     }
 
     public static function getRelations(): array { return []; }

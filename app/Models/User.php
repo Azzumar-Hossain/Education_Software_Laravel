@@ -80,32 +80,15 @@ class User extends Authenticatable implements FilamentUser
     {
         parent::boot();
 
-        static::creating(function ($user) {
-            if (strtolower($user->type) === 'student') {
-                if (empty($user->student_id)) {
-                    $year = date('Y');
-                    
-                    $lastUser = self::where('student_id', 'like', $year . '%')
-                                       ->orderBy('student_id', 'desc')
-                                       ->first();
-
-                    if ($lastUser) {
-                        $sequence = intval(substr($lastUser->student_id, 4)) + 1;
-                    } else {
-                        $sequence = 1;
-                    }
-
-                    $user->student_id = $year . str_pad($sequence, 4, '0', STR_PAD_LEFT);
-                }
-            }
-        });
-
-        // Automatically assign Spatie Role based on user type if created/updated
         static::saved(function ($user) {
-            if ($user->type && !$user->hasRole($user->type)) {
-                // Ensure role exists before assigning
-                \Spatie\Permission\Models\Role::firstOrCreate(['name' => $user->type]);
-                $user->assignRole($user->type);
+            if ($user->type) {
+                // Assign Spatie role matching user->type
+                $role = \Spatie\Permission\Models\Role::firstOrCreate([
+                    'name' => $user->type,
+                    'guard_name' => 'web',
+                ]);
+
+                $user->syncRoles([$role->name]);
             }
         });
     }

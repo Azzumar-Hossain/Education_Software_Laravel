@@ -32,6 +32,20 @@ class MarkResource extends Resource
     protected static ?string $navigationIcon = 'heroicon-o-document-text';
     protected static ?string $navigationLabel = 'Marks Entry';
 
+    // 🌟 ACCESS CONTROL METHOD 🌟
+    //public static function canViewAny(): bool
+    //{
+    //    $user = auth()->user();
+
+    //    if (!$user) {
+    //        return false;
+    //    }
+
+    //    return in_array($user->type, ['super_admin', 'admin', 'teacher']) 
+    //        || $user->hasRole('teacher')
+    //        || $user->hasPermissionTo('view_any_mark');
+    //}
+
     public static function form(Form $form): Form
     {
         return $form
@@ -167,7 +181,7 @@ class MarkResource extends Resource
                                     if (!$classId) return [];
                                     
                                     $user = auth()->user();
-                                    $sectionsQuery = Section::where('school_class_id', $classId);
+                                    $sectionsQuery = Section::whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $classId));
                                     if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
                                         $sectionIds = TeacherAllocation::where('user_id', $user->id)
                                             ->where('school_class_id', $classId)
@@ -320,7 +334,7 @@ class MarkResource extends Resource
                                 ->options(function (Forms\Get $get) {
                                     $classId = $get('school_class_id');
                                     if (!$classId) return [];
-                                    return Section::where('school_class_id', $classId)->pluck('name', 'id');
+                                    return Section::whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $classId))->pluck('name', 'id');
                                 })
                                 ->placeholder('All Sections')
                                 ->live(),
@@ -466,9 +480,24 @@ class MarkResource extends Resource
                             ->options(function (Forms\Get $get) {
                                 $classId = $get('school_class_id');
                                 if (!$classId) return [];
-                                return Section::where('school_class_id', $classId)->pluck('name', 'id');
+                                
+                                $user = auth()->user();
+
+                                // 🌟 Fixed: Use relationship pivot query instead of school_class_id column
+                                $sectionsQuery = Section::whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $classId));
+
+                                if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
+                                    $sectionIds = TeacherAllocation::where('user_id', $user->id)
+                                        ->where('school_class_id', $classId)
+                                        ->whereNotNull('section_id')
+                                        ->pluck('section_id');
+                                        
+                                    if ($sectionIds->isNotEmpty()) {
+                                        $sectionsQuery->whereIn('sections.id', $sectionIds);
+                                    }
+                                }
+                                return $sectionsQuery->pluck('name', 'id');
                             })
-                            ->nullable()
                             ->live(),
 
                         Forms\Components\Select::make('study_group')
@@ -709,27 +738,27 @@ class MarkResource extends Resource
                             ->success()
                             ->send();
                     }),
+
             ]);
     }
 
     public static function getEloquentQuery(): Builder
-    {
-        $query = parent::getEloquentQuery();
-        $user = auth()->user();
+{
+    $query = parent::getEloquentQuery();
+    $user = auth()->user();
 
-        // Strict Scope for Teacher Access Level
-        if ($user && (strtolower($user->type) === 'teacher' || $user->hasRole('teacher'))) {
-            $allocations = TeacherAllocation::where('user_id', $user->id)->get();
+    if ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
+        $allocations = \App\Models\ClassTeacher::where('teacher_id', $user->id)->get();
 
-            $allocatedClassIds = $allocations->pluck('school_class_id')->unique()->filter();
-            $allocatedSubjectIds = $allocations->pluck('subject_id')->unique()->filter();
+        $assignedClassIds = $allocations->pluck('school_class_id')->unique()->filter();
+        $assignedSectionIds = $allocations->pluck('section_id')->unique()->filter();
 
-            return $query->whereIn('school_class_id', $allocatedClassIds)
-                         ->whereIn('subject_id', $allocatedSubjectIds);
-        }
-
-        return $query;
+        return $query->whereIn('school_class_id', $assignedClassIds)
+                     ->whereIn('section_id', $assignedSectionIds);
     }
+
+    return $query;
+}
 
     public static function getRelations(): array
     {

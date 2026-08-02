@@ -3,9 +3,12 @@
 namespace App\Filament\Resources;
 
 use App\Models\User;
+use App\Models\AcademicYear; // 🌟 1. ADDED MISSING IMPORT
+use App\Models\ClassTeacher;
+use App\Models\Section;
+use App\Models\SchoolClass;
 use App\Filament\Resources\ClassTeacherResource\Pages;
 use App\Filament\Resources\ClassTeacherResource\RelationManagers;
-use App\Models\ClassTeacher;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -27,25 +30,51 @@ class ClassTeacherResource extends Resource
     {
         return $form
             ->schema([
+                // 🌟 1. ACADEMIC YEAR (REQUIRED) 🌟
+                Forms\Components\Select::make('academic_year_id')
+                    ->label('Academic Year')
+                    ->options(AcademicYear::pluck('name', 'id'))
+                    ->default(fn () => AcademicYear::latest()->first()?->id) // Pre-selects latest academic year
+                    ->required()
+                    ->live(),
+
+                // 🌟 2. CLASS TEACHER 🌟
                 Forms\Components\Select::make('teacher_id')
                     ->label('Class Teacher')
-                    ->options(User::where('type', 'teacher')->pluck('name', 'id'))
+                    ->options(
+                        User::whereIn('type', ['teacher', 'class_teacher'])
+                            ->orWhereHas('roles', fn ($q) => $q->whereIn('name', ['teacher', 'class_teacher']))
+                            ->pluck('name', 'id')
+                    )
                     ->searchable()
                     ->required(),
 
-                Forms\Components\Select::make('academic_year_id')
-                    ->relationship('academicYear', 'name')
-                    ->label('Academic Year')
-                    ->required(),
-
+                // 🌟 3. CLASS 🌟
                 Forms\Components\Select::make('school_class_id')
-                    ->relationship('schoolClass', 'name')
                     ->label('Class')
-                    ->required(),
+                    ->options(SchoolClass::pluck('name', 'id'))
+                    ->required()
+                    ->live()
+                    ->afterStateUpdated(fn (Forms\Set $set) => $set('section_id', null)), // Resets section when class changes
 
+                // 🌟 4. DYNAMIC SECTION (FILTERED BY CLASS) 🌟
                 Forms\Components\Select::make('section_id')
-                    ->relationship('section', 'name')
                     ->label('Section')
+                    ->placeholder(fn (Forms\Get $get) => !$get('school_class_id') ? 'Select Class First' : 'Select Section')
+                    ->options(function (Forms\Get $get) {
+                        $classId = $get('school_class_id');
+
+                        if (!$classId) {
+                            return [];
+                        }
+
+                        // Fetches only sections belonging to the chosen class
+                        return Section::whereHas('schoolClasses', function ($q) use ($classId) {
+                            $q->where('school_classes.id', $classId);
+                        })->pluck('name', 'id');
+                    })
+                    ->searchable()
+                    ->disabled(fn (Forms\Get $get) => !$get('school_class_id'))
                     ->required(),
             ]);
     }
@@ -105,10 +134,18 @@ class ClassTeacherResource extends Resource
         ];
     }
 
+    // 🌟 2. UPDATED DYNAMIC ACCESS CONTROL 🌟
     public static function canViewAny(): bool
     {
         $user = auth()->user();
-        // Only Super Admins and Admins can see this menu item
-        return $user->type === 'super_admin' || $user->type === 'admin';
+
+        if (!$user) {
+            return false;
+        }
+
+        // Admins pass automatically, others rely on Shield permission
+        return in_array($user->type, ['super_admin', 'admin']) 
+            || $user->hasRole(['super_admin', 'admin'])
+            || $user->can('view_any_class::teacher');
     }
 }

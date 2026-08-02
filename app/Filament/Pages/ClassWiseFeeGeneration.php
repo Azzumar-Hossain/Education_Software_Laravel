@@ -2,6 +2,7 @@
 
 namespace App\Filament\Pages;
 
+use App\Filament\Traits\HasAdminOnlyAccess;
 use Filament\Pages\Page;
 use Filament\Forms\Form;
 use Filament\Forms\Contracts\HasForms;
@@ -28,6 +29,7 @@ use Illuminate\Database\Eloquent\Builder;
 class ClassWiseFeeGeneration extends Page implements HasForms, HasTable
 {
     use InteractsWithForms, InteractsWithTable;
+    use HasAdminOnlyAccess;
 
     protected static ?string $navigationIcon = 'heroicon-o-document-duplicate';
     protected static ?string $navigationGroup = 'Finance';

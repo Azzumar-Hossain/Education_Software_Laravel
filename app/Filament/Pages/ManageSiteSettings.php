@@ -2,6 +2,7 @@
 
 namespace App\Filament\Pages;
 
+use App\Filament\Traits\HasAdminOnlyAccess;
 use App\Models\SiteSetting;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -13,6 +14,7 @@ class ManageSiteSettings extends Page implements Forms\Contracts\HasForms
 {
     use Forms\Concerns\InteractsWithForms;
     use WithFileUploads; // 🌟 Enables direct Livewire upload properties
+    use HasAdminOnlyAccess;
 
     protected static ?string $navigationIcon = 'heroicon-o-cog-6-tooth';
     protected static ?string $navigationGroup = 'Settings';

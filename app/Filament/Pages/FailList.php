@@ -8,6 +8,7 @@ use App\Models\Section;
 use App\Models\Enrollment;
 use App\Models\Mark;
 use App\Models\Subject;
+use App\Models\ClassTeacher;
 use Filament\Pages\Page;
 use Filament\Forms\Form;
 use Filament\Forms\Components\Select;
@@ -28,6 +29,21 @@ class FailList extends Page implements HasForms
 
     public ?array $data = [];
     public array $failRecords = []; // 🌟 Public property initialized as array for Blade
+
+    // 🌟 1. DYNAMIC ACCESS CONTROL 🌟
+    public static function canAccess(): bool
+    {
+        $user = auth()->user();
+
+        if (!$user) {
+            return false;
+        }
+
+        return $user->type === 'super_admin'
+            || $user->type === 'admin'
+            || $user->hasRole(['super_admin', 'admin', 'class_teacher'])
+            || $user->can('page_FailList');
+    }
 
     public function mount(): void
     {
@@ -98,9 +114,31 @@ class FailList extends Page implements HasForms
                                 ->required()
                                 ->live(),
 
+                            // 🌟 2. SECTION SELECTOR (FILTERED FOR CLASS TEACHERS) 🌟
                             Select::make('section_id')
                                 ->label('Select Section')
-                                ->options(fn($get) => $get('school_class_id') ? Section::whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $get('school_class_id')))->pluck('name', 'id') : [])
+                                ->options(function ($get) {
+                                    $classId = $get('school_class_id');
+                                    if (!$classId) return [];
+
+                                    $user = auth()->user();
+
+                                    // If Class Teacher, filter dropdown options to assigned sections only
+                                    if ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
+                                        $assignedSectionIds = ClassTeacher::where('teacher_id', $user->id)
+                                            ->pluck('section_id')
+                                            ->unique()
+                                            ->filter();
+
+                                        return Section::whereIn('id', $assignedSectionIds)
+                                            ->whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $classId))
+                                            ->pluck('name', 'id');
+                                    }
+
+                                    // Admin / Super Admin view all sections
+                                    return Section::whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $classId))
+                                        ->pluck('name', 'id');
+                                })
                                 ->visible(fn($get) => $get('merit_scope') === 'section')
                                 ->required(),
 
@@ -123,6 +161,7 @@ class FailList extends Page implements HasForms
         $this->validate();
         $inputs = $this->data;
 
+        $user = auth()->user();
         $query = Enrollment::where('school_class_id', $inputs['school_class_id'])
             ->where('academic_year_id', $inputs['academic_year_id']);
 
@@ -130,10 +169,16 @@ class FailList extends Page implements HasForms
             $query->where('section_id', $inputs['section_id'] ?? null);
         } elseif (($inputs['merit_scope'] ?? null) === 'group') {
             $query->where('study_group', $inputs['study_group'] ?? null);
+        } elseif ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
+            // Extra safety: if merit scope is class-wise, enforce class teacher's section
+            $assignedSectionIds = ClassTeacher::where('teacher_id', $user->id)->pluck('section_id')->unique()->filter();
+            if ($assignedSectionIds->isNotEmpty()) {
+                $query->whereIn('section_id', $assignedSectionIds);
+            }
         }
 
         $enrollments = $query->get();
-        $calculatedFailRecords = []; // 🌟 Explicitly initialized as an array
+        $calculatedFailRecords = [];
 
         // Fetch failing grades
         $failingGrades = \App\Models\GradeScale::where('is_fail_grade', true)

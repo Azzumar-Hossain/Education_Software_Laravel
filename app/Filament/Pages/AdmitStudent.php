@@ -2,6 +2,7 @@
 
 namespace App\Filament\Pages;
 
+use App\Filament\Traits\HasAdminOnlyAccess;
 use Filament\Pages\Page;
 use Filament\Forms\Contracts\HasForms;
 use Filament\Forms\Concerns\InteractsWithForms;
@@ -21,6 +22,7 @@ use Filament\Notifications\Notification;
 class AdmitStudent extends Page implements HasForms
 {
     use InteractsWithForms;
+    use HasAdminOnlyAccess;
 
     protected static ?string $navigationIcon = 'heroicon-o-academic-cap';
     protected static ?string $navigationLabel = 'Admit Student';

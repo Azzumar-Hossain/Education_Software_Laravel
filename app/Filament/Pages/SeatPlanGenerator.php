@@ -2,6 +2,7 @@
 
 namespace App\Filament\Pages;
 
+use App\Filament\Traits\HasAdminOnlyAccess;
 use App\Models\AcademicYear;
 use App\Models\SchoolClass;
 use App\Models\Exam;
@@ -20,6 +21,7 @@ use Filament\Actions\Action;
 class SeatPlanGenerator extends Page implements HasForms
 {
     use InteractsWithForms;
+    use HasAdminOnlyAccess;
 
     protected static ?string $navigationGroup = 'Exam';
     protected static ?int $navigationSort = 13; 

@@ -2,6 +2,7 @@
 
 namespace App\Filament\Pages;
 
+use App\Filament\Traits\HasAdminOnlyAccess;
 use Filament\Pages\Page;
 use Filament\Forms\Form;
 use Filament\Forms\Components;
@@ -20,6 +21,7 @@ use Carbon\Carbon;
 class FeeHeadReport extends Page implements HasForms
 {
     use InteractsWithForms;
+    use HasAdminOnlyAccess;
 
     protected static ?string $navigationIcon = 'heroicon-o-chart-pie';
     protected static ?string $navigationGroup = 'Finance';

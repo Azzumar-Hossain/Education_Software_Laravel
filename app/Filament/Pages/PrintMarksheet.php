@@ -8,6 +8,7 @@ use App\Models\Section;
 use App\Models\Exam;
 use App\Models\Enrollment;
 use App\Models\Mark;
+use App\Models\ClassTeacher;
 use Filament\Pages\Page;
 use Filament\Forms\Form;
 use Filament\Forms\Components\Select;
@@ -29,6 +30,21 @@ class PrintMarksheet extends Page implements HasForms
 
     public ?array $data = [];
     public array $studentsList = [];
+
+    // 🌟 1. DYNAMIC ACCESS CONTROL 🌟
+    public static function canAccess(): bool
+    {
+        $user = auth()->user();
+
+        if (!$user) {
+            return false;
+        }
+
+        return $user->type === 'super_admin'
+            || $user->type === 'admin'
+            || $user->hasRole(['super_admin', 'admin', 'class_teacher'])
+            || $user->can('page_PrintMarksheet');
+    }
 
     public function mount(): void
     {
@@ -90,7 +106,7 @@ class PrintMarksheet extends Page implements HasForms
                                     $this->studentsList = [];
                                 }),
 
-                            // 3. TARGET EXAM (Deduplicated, showing "Exam Name (Year)")
+                            // 3. TARGET EXAM
                             Select::make('exam_id')
                                 ->label('Target Exam')
                                 ->options(function ($get) {
@@ -103,7 +119,6 @@ class PrintMarksheet extends Page implements HasForms
 
                                     $query = Exam::query()->where('academic_year_id', $yearId);
 
-                                    // Filter by school_class_id column if present in exams table
                                     if (\Schema::hasColumn('exams', 'school_class_id')) {
                                         $query->where(function ($q) use ($classId) {
                                             $q->whereNull('school_class_id')
@@ -111,7 +126,6 @@ class PrintMarksheet extends Page implements HasForms
                                         });
                                     }
 
-                                    // Filter by exams that have marks recorded for this class
                                     if (\Schema::hasTable('marks')) {
                                         $examIdsWithMarks = Mark::where('academic_year_id', $yearId)
                                             ->where('school_class_id', $classId)
@@ -125,7 +139,6 @@ class PrintMarksheet extends Page implements HasForms
 
                                     $exams = $query->with('academicYear')->get();
 
-                                    // Deduplicate by Exam Name so each exam title appears once
                                     $uniqueExams = [];
                                     foreach ($exams as $exam) {
                                         $yearName = $exam->academicYear->name ?? '';
@@ -147,13 +160,31 @@ class PrintMarksheet extends Page implements HasForms
                                 ->required()
                                 ->live(),
 
-                            // 4. SECTION
+                            // 🌟 2. SECTION SELECTOR (FILTERED FOR CLASS TEACHERS) 🌟
                             Select::make('section_id')
                                 ->label('Select Section')
-                                ->options(fn ($get) => $get('school_class_id') 
-                                    ? Section::whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $get('school_class_id')))->pluck('name', 'id') 
-                                    : []
-                                )
+                                ->options(function ($get) {
+                                    $classId = $get('school_class_id');
+                                    if (!$classId) return [];
+
+                                    $user = auth()->user();
+
+                                    // If Class Teacher, restrict to assigned sections only
+                                    if ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
+                                        $assignedSectionIds = ClassTeacher::where('teacher_id', $user->id)
+                                            ->pluck('section_id')
+                                            ->unique()
+                                            ->filter();
+
+                                        return Section::whereIn('id', $assignedSectionIds)
+                                            ->whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $classId))
+                                            ->pluck('name', 'id');
+                                    }
+
+                                    // Default Admin / Super Admin view
+                                    return Section::whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $classId))
+                                        ->pluck('name', 'id');
+                                })
                                 ->placeholder('All Sections')
                                 ->live(),
                         ]),
@@ -165,16 +196,22 @@ class PrintMarksheet extends Page implements HasForms
     {
         $this->validate();
         $inputs = $this->data;
+        $user = auth()->user();
 
         $query = Enrollment::with(['user', 'section', 'schoolClass'])
             ->where('academic_year_id', $inputs['academic_year_id'])
             ->where('school_class_id', $inputs['school_class_id']);
 
+        // Scope section filters for class teachers
         if (!empty($inputs['section_id'])) {
             $query->where('section_id', $inputs['section_id']);
+        } elseif ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
+            $assignedSectionIds = ClassTeacher::where('teacher_id', $user->id)->pluck('section_id')->unique()->filter();
+            if ($assignedSectionIds->isNotEmpty()) {
+                $query->whereIn('section_id', $assignedSectionIds);
+            }
         }
 
-        // 🌟 Sort numerically by roll number (handles string/integer casting properly)
         $enrollments = $query->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')->get();
 
         $validStudents = [];
@@ -187,13 +224,13 @@ class PrintMarksheet extends Page implements HasForms
 
             if ($hasMarks) {
                 $validStudents[] = [
-                    'id' => $e->id,
-                    'user_id' => $e->user_id,
-                    'student_id' => $e->user->student_id ?? 'N/A',
-                    'name' => $e->user->name ?? 'N/A',
-                    'roll_number' => (int) $e->roll_number, // Cast as integer
-                    'section' => $e->section->name ?? 'N/A',
-                    'group' => $e->study_group ?? 'General',
+                    'id'          => $e->id,
+                    'user_id'     => $e->user_id,
+                    'student_id'  => $e->user->student_id ?? 'N/A',
+                    'name'        => $e->user->name ?? 'N/A',
+                    'roll_number' => (int) $e->roll_number,
+                    'section'     => $e->section->name ?? 'N/A',
+                    'group'       => $e->study_group ?? 'General',
                 ];
             }
         }
@@ -226,7 +263,6 @@ class PrintMarksheet extends Page implements HasForms
 
         $studentIds = array_column($this->studentsList, 'id');
 
-        // 🌟 Enforce exact numerical roll order in PDF compilation
         $enrollments = Enrollment::with(['user', 'schoolClass', 'section', 'academicYear'])
             ->whereIn('id', $studentIds)
             ->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')

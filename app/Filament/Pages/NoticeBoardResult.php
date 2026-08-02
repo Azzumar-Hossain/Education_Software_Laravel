@@ -8,6 +8,7 @@ use App\Models\Section;
 use App\Models\Enrollment;
 use App\Models\Subject;
 use App\Models\Mark;
+use App\Models\ClassTeacher;
 use Filament\Pages\Page;
 use Filament\Forms\Form;
 use Filament\Forms\Components\Select;
@@ -30,6 +31,21 @@ class NoticeBoardResult extends Page implements HasForms
     public $students = [];
     public $subjects = [];
 
+    // 🌟 1. DYNAMIC ACCESS CONTROL 🌟
+    public static function canAccess(): bool
+    {
+        $user = auth()->user();
+
+        if (!$user) {
+            return false;
+        }
+
+        return $user->type === 'super_admin'
+            || $user->type === 'admin'
+            || $user->hasRole(['super_admin', 'admin', 'class_teacher'])
+            || $user->can('page_NoticeBoardResult');
+    }
+
     public function mount(): void
     {
         $this->form->fill();
@@ -50,26 +66,52 @@ class NoticeBoardResult extends Page implements HasForms
                                 ->label('Year')
                                 ->options(AcademicYear::pluck('name', 'id'))
                                 ->required(),
+
                             Select::make('school_class_id')
                                 ->label('Class')
                                 ->options(SchoolClass::pluck('name', 'id'))
                                 ->required()
                                 ->live(),
+
                             Select::make('exam_id')
                                 ->label('Exam')
                                 ->options(fn($get) => $get('school_class_id') ? \App\Models\Exam::where('school_class_id', $get('school_class_id'))->pluck('name', 'id') : [])
                                 ->required(),
+
+                            // 🌟 2. SECTION SELECTOR (FILTERED FOR CLASS TEACHERS) 🌟
                             Select::make('section_id')
                                 ->label('Section')
-                                ->options(fn($get) => $get('school_class_id') ? Section::whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $get('school_class_id')))->pluck('name', 'id') : [])
+                                ->options(function ($get) {
+                                    $classId = $get('school_class_id');
+                                    if (!$classId) return [];
+
+                                    $user = auth()->user();
+
+                                    // If Class Teacher, filter dropdown options to assigned sections only
+                                    if ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
+                                        $assignedSectionIds = ClassTeacher::where('teacher_id', $user->id)
+                                            ->pluck('section_id')
+                                            ->unique()
+                                            ->filter();
+
+                                        return Section::whereIn('id', $assignedSectionIds)
+                                            ->whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $classId))
+                                            ->pluck('name', 'id');
+                                    }
+
+                                    // Admin / Super Admin view all sections
+                                    return Section::whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $classId))
+                                        ->pluck('name', 'id');
+                                })
                                 ->nullable(),
+
                             Select::make('study_group')
                                 ->label('Study Group')
                                 ->options([
-                                    'Science' => 'Science',
+                                    'Science'          => 'Science',
                                     'Arts/Humanities' => 'Arts / Humanities',
-                                    'Commerce' => 'Commerce',
-                                    'General' => 'General',
+                                    'Commerce'         => 'Commerce',
+                                    'General'          => 'General',
                                 ])->nullable(),
                         ]),
                     ]),
@@ -83,6 +125,7 @@ class NoticeBoardResult extends Page implements HasForms
 
         $classId = $inputs['school_class_id'];
         $groupName = $inputs['study_group'];
+        $user = auth()->user();
 
         // Pull active subjects flat sequence map
         $this->subjects = Subject::whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $classId))
@@ -97,11 +140,21 @@ class NoticeBoardResult extends Page implements HasForms
             ->get();
 
         // Load targeted student rosters ordered by Roll
-        $this->students = Enrollment::where('school_class_id', $classId)
+        $query = Enrollment::where('school_class_id', $classId)
             ->where('academic_year_id', $inputs['academic_year_id'])
-            ->when($inputs['section_id'], fn($q, $s) => $q->where('section_id', $s))
-            ->when($groupName, fn($q, $g) => $q->where('study_group', $g))
-            // 🌟 FIXED: Use CAST for sequential numeric sorting (1, 2, ... 10, 11)
+            ->when($groupName, fn($q, $g) => $q->where('study_group', $g));
+
+        // 🌟 Scope section filter strictly for Class Teachers
+        if (!empty($inputs['section_id'])) {
+            $query->where('section_id', $inputs['section_id']);
+        } elseif ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
+            $assignedSectionIds = ClassTeacher::where('teacher_id', $user->id)->pluck('section_id')->unique()->filter();
+            if ($assignedSectionIds->isNotEmpty()) {
+                $query->whereIn('section_id', $assignedSectionIds);
+            }
+        }
+
+        $this->students = $query
             ->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')
             ->get();
     }
