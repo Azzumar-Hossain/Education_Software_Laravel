@@ -58,6 +58,46 @@ class MarkResource extends Resource
 
     public static function table(Table $table): Table
     {
+        // 🌟 1. THE INLINE CALCULATION LOGIC
+        // This runs instantly whenever a teacher types a mark in the table
+        $calculateMarks = function (Mark $record, $state, \Filament\Tables\Columns\Column $column) {
+            // Update the specific column being typed into
+            $record->{$column->getName()} = (float) $state;
+
+            // Fetch the subject rules and current marks
+            $subject = clone $record->subject; // Clone to ensure fresh data
+            $written = (float) $record->written_mark;
+            $mcq = (float) $record->mcq_mark;
+            $practical = (float) $record->practical_mark;
+
+            // Calculate total marks
+            $total = $written + $mcq + $practical;
+            $record->marks_obtained = $total;
+
+            // 🌟 2. CHECK COMPONENT PASS LIMITS
+            $writtenFailed = ($subject->written_pass > 0) && ($written < $subject->written_pass);
+            $mcqFailed = ($subject->mcq_pass > 0) && ($mcq < $subject->mcq_pass);
+            $practicalFailed = ($subject->practical_pass > 0) && ($practical < $subject->practical_pass);
+
+            // True if overall rule is off AND student failed any component
+            $isComponentFailed = !$subject->overall_pass_rule && ($writtenFailed || $mcqFailed || $practicalFailed);
+
+            // Calculate percentage
+            $maxPossible = $subject->written_total + $subject->mcq_total + $subject->practical_total;
+            $percentage = $maxPossible > 0 ? ($total / $maxPossible) * 100 : 0;
+
+            // 🌟 3. FETCH UPDATED GRADE & GPA
+            $gradeData = \App\Models\GradeScale::getGradeForMark($percentage, $isComponentFailed);
+
+            $record->grade = $gradeData['grade'];
+            $record->gpa = $gradeData['point'];
+            
+            // Save everything to the database
+            $record->save();
+
+            return $state;
+        };
+
         return $table
             ->columns([
                 Tables\Columns\TextColumn::make('student.student_id')
@@ -83,24 +123,30 @@ class MarkResource extends Resource
                     ->label('Subject')
                     ->badge(),
                     
+                // 🌟 ATTACH CALCULATION HOOK TO WRITTEN
                 Tables\Columns\TextInputColumn::make('written_mark')
                     ->label('Written')
+                    ->updateStateUsing($calculateMarks)
                     ->rules(fn (Mark $record) => [
                         'numeric', 
                         'min:0', 
                         'max:' . ($record->subject->getMarksForExam($record->exam_id)['written_total'] ?? 100) 
                     ]),
                     
+                // 🌟 ATTACH CALCULATION HOOK TO MCQ
                 Tables\Columns\TextInputColumn::make('mcq_mark')
                     ->label('MCQ')
+                    ->updateStateUsing($calculateMarks)
                     ->rules(fn (Mark $record) => [
                         'numeric', 
                         'min:0', 
                         'max:' . ($record->subject->getMarksForExam($record->exam_id)['mcq_total'] ?? 100)
                     ]),
                     
+                // 🌟 ATTACH CALCULATION HOOK TO PRACTICAL
                 Tables\Columns\TextInputColumn::make('practical_mark')
                     ->label('Practical')
+                    ->updateStateUsing($calculateMarks)
                     ->rules(fn (Mark $record) => [
                         'numeric', 
                         'min:0', 
@@ -120,7 +166,7 @@ class MarkResource extends Resource
                         
                         $scaleMatch = GradeScale::where('letter_grade', $state)->first();
                         
-                        if ($scaleMatch?->is_fail_grade) {
+                        if ($scaleMatch?->is_fail_grade || $state === 'F') {
                             return 'danger'; 
                         }
                         

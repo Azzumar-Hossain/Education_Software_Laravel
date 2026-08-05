@@ -8,24 +8,8 @@
             
         $marksGrouped = $allMarks->groupBy('exam_id');
         
-        $getGrade = function($percentage) {
-            if ($percentage >= 80) return 'A+';
-            if ($percentage >= 70) return 'A';
-            if ($percentage >= 60) return 'A-';
-            if ($percentage >= 50) return 'B';
-            if ($percentage >= 40) return 'C';
-            if ($percentage >= 33) return 'D';
-            return 'F';
-        };
-
-        $getGPA = function($percentage) {
-            if ($percentage >= 80) return '5.00';
-            if ($percentage >= 70) return '4.00';
-            if ($percentage >= 60) return '3.50';
-            if ($percentage >= 50) return '3.00';
-            if ($percentage >= 40) return '2.00';
-            if ($percentage >= 33) return '1.00';
-            return '0.00';
+        $getGradeData = function($percentage, $isComponentFailed = false) {
+            return \App\Models\GradeScale::getGradeForMark($percentage, $isComponentFailed);
         };
 
         $mainExamIds = \App\Models\Exam::whereNull('parent_exam_id')->pluck('id')->toArray();
@@ -84,8 +68,17 @@
                                 }
                             }
                             
+                            $isComponentFailed = trim($mark->grade) === 'F';
                             $mark->marks_obtained = round($cumulativeObtained, 2);
-                            $mark->grade = $getGrade(($mark->marks_obtained / $mainMax) * 100);
+                            
+                            if ($isComponentFailed) {
+                                $mark->grade = 'F';
+                                $mark->gpa = 0.00;
+                            } else {
+                                $gradeData = $getGradeData(($mark->marks_obtained / $mainMax) * 100, false);
+                                $mark->grade = $gradeData['grade'];
+                                $mark->gpa = $gradeData['point'];
+                            }
                         }
                     }
 
@@ -117,6 +110,18 @@
                             $combinedObt = $mark->marks_obtained + $partnerMark->marks_obtained;
                             $combinedPerc = $combinedMax > 0 ? ($combinedObt / $combinedMax) * 100 : 0;
                             
+                            // 🌟 Trust the DB: If either paper failed components, the combined fails
+                            $isComponentFailed = (trim($mark->grade) === 'F' || trim($partnerMark->grade) === 'F');
+                            
+                            if ($isComponentFailed) {
+                                $cGrade = 'F';
+                                $cGpa = '0.00';
+                            } else {
+                                $gradeData = $getGradeData($combinedPerc, false);
+                                $cGrade = $gradeData['grade'];
+                                $cGpa = number_format($gradeData['point'], 2);
+                            }
+                            
                             $groupedMarks[] = [
                                 'is_combined' => true,
                                 'subject_model' => $mark->subject,
@@ -126,26 +131,26 @@
                                 'max2' => $max2,
                                 'combined_max' => $combinedMax,
                                 'combined_obt' => $combinedObt,
-                                'combined_grade' => $getGrade($combinedPerc),
-                                'gpa' => $getGPA($combinedPerc)
+                                'combined_grade' => $cGrade,
+                                'gpa' => $cGpa
                             ];
                             $processedIds[] = $mark->id;
                             $processedIds[] = $partnerMark->id;
                         } else {
-                            $perc = $max1 > 0 ? ($mark->marks_obtained / $max1) * 100 : 0;
+                            // 🌟 ULTIMATE FIX: 100% BLIND TRUST IN THE DATABASE FOR SINGLE SUBJECTS 🌟
                             $groupedMarks[] = [
                                 'is_combined' => false,
                                 'subject_model' => $mark->subject,
                                 'paper1' => $mark,
                                 'max1' => $max1,
-                                'combined_grade' => $getGrade($perc),
-                                'gpa' => $getGPA($perc)
+                                'combined_grade' => trim($mark->grade), 
+                                'gpa' => number_format((float)$mark->gpa, 2) 
                             ];
                             $processedIds[] = $mark->id;
                         }
                     }
 
-                    // 🌟 NEW: CALCULATE TERM-LEVEL GPA & GRADE WITHOUT 4TH SUBJECT 🌟
+                    // --- CALCULATE TERM-LEVEL GPA & GRADE WITHOUT 4TH SUBJECT ---
                     $termCoreGPAs = [];
                     $hasTermCoreFail = false;
 
@@ -332,12 +337,20 @@
                                         
                                         $displayName = trim(str_replace([' 1st', ' 2nd', ' Paper', ' I', ' II'], '', $mark->subject->name));
                                         
+                                        $isComponentFailed = (trim($mark->grade) === 'F' || trim($partnerMark->grade) === 'F');
+                                        
+                                        if ($isComponentFailed) {
+                                            $gradeData = ['grade' => 'F'];
+                                        } else {
+                                            $gradeData = $getGradeData($combinedMax > 0 ? ($combinedObt / $combinedMax) * 100 : 0, false);
+                                        }
+
                                         $finalGroupedMarks[] = [
-                                            'subject_model' => $mark->subject, // Keep reference for 4th sub filters
+                                            'subject_model' => $mark->subject,
                                             'name' => $displayName,
                                             'max' => $combinedMax,
                                             'obt' => $combinedObt,
-                                            'grade' => $getGrade($combinedMax > 0 ? ($combinedObt / $combinedMax) * 100 : 0)
+                                            'grade' => $gradeData['grade']
                                         ];
                                         
                                         $processedFinalIds[] = $mark->subject_id;
@@ -356,14 +369,13 @@
                                             'name' => $mark->subject->name,
                                             'max' => $subMax,
                                             'obt' => $subObt,
-                                            'grade' => $getGrade($subMax > 0 ? ($subObt / $subMax) * 100 : 0)
+                                            'grade' => trim($mark->grade)
                                         ];
                                         
                                         $processedFinalIds[] = $mark->subject_id;
                                     }
                                 }
 
-                                // 🌟 NEW: CALCULATE CUMULATIVE GRAND TOTALS WITHOUT 4TH SUBJECT 🌟
                                 $cumulativeCorePercentages = [];
                                 $hasCumulativeCoreFail = false;
 
@@ -371,7 +383,6 @@
                                     $subName = strtolower($row['subject_model']->name ?? '');
                                     $subType = strtolower($row['subject_model']->subject_type ?? $row['subject_model']->type ?? '');
 
-                                    // Filter out Optional tracker subjects
                                     if (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional') {
                                         continue;
                                     }
@@ -386,8 +397,8 @@
                                 $finalCoreCount = count($cumulativeCorePercentages);
                                 $finalAvgPercentage = $finalCoreCount > 0 ? array_sum($cumulativeCorePercentages) / $finalCoreCount : 0;
                                 
-                                $finalGradeWithout4th = $hasCumulativeCoreFail ? 'F' : $getGrade($finalAvgPercentage);
-                                $finalGPAWithout4th   = $hasCumulativeCoreFail ? '0.00' : $getGPA($finalAvgPercentage);
+                                $finalGradeWithout4th = $hasCumulativeCoreFail ? 'F' : $getGradeData($finalAvgPercentage)['grade'];
+                                $finalGPAWithout4th   = $hasCumulativeCoreFail ? '0.00' : number_format($getGradeData($finalAvgPercentage)['point'], 2);
                             @endphp
                             
                             @foreach($finalGroupedMarks as $row)
@@ -412,7 +423,7 @@
                                 <td class="px-6 py-4 text-center text-indigo-100">{{ number_format($grandTotalMax, 0) }}</td>
                                 <td class="px-6 py-4 text-center text-white font-black">{{ number_format($grandTotalObtained, 1) }}</td>
                                 <td class="px-6 py-4 text-center text-base font-black">
-                                    {{ $getGrade($grandTotalMax > 0 ? ($grandTotalObtained / $grandTotalMax) * 100 : 0) }}
+                                    {{ $hasCumulativeCoreFail ? 'F' : $getGradeData($grandTotalMax > 0 ? ($grandTotalObtained / $grandTotalMax) * 100 : 0)['grade'] }}
                                 </td>
                             </tr>
 

@@ -27,11 +27,10 @@ class MarksImport implements ToModel, WithHeadingRow
         if (!$user) return null;
 
         // 2. Fetch Class from Student's Enrollment as an ultimate fallback
-        // This guarantees we know their exact class, avoiding Subject Name conflicts!
         $enrollment = Enrollment::where('user_id', $user->id)->latest()->first();
         $classId = !empty($row['school_class_id']) ? (int) $row['school_class_id'] : ($enrollment?->school_class_id);
 
-        // 3. Resolve Exact IDs safely (Using ID if exists, otherwise fallback to Name + Class)
+        // 3. Resolve Exact IDs safely
         $examId = !empty($row['exam_id']) 
             ? (int) $row['exam_id'] 
             : Exam::where('name', trim($row['exam_name'] ?? ''))->where('school_class_id', $classId)->value('id');
@@ -50,19 +49,35 @@ class MarksImport implements ToModel, WithHeadingRow
         $practical = is_numeric($row['practical_mark'] ?? $row['practical_marks'] ?? null) ? (float)($row['practical_mark'] ?? $row['practical_marks']) : 0;
         $total     = $written + $mcq + $practical;
 
-        $scale = GradeScale::where('min_mark', '<=', $total)->where('max_mark', '>=', $total)->first();
-        $grade = $scale ? $scale->letter_grade : 'F';
-        $gpa   = $scale ? $scale->grade_point : 0.00;
+        // 🌟 5. NEW COMPONENT-WISE FAIL LOGIC 🌟
+        $subject = Subject::find($subjectId);
+        $isComponentFailed = false;
+        $percentage = $total; // Default
 
-        // 5. MATCH EXACTLY LIKE THE GENERATOR DOES
-        // We only search by these 3 critical IDs. It will 100% find the generated row.
+        if ($subject) {
+            $writtenFailed   = ($subject->written_pass > 0) && ($written < $subject->written_pass);
+            $mcqFailed       = ($subject->mcq_pass > 0) && ($mcq < $subject->mcq_pass);
+            $practicalFailed = ($subject->practical_pass > 0) && ($practical < $subject->practical_pass);
+
+            $isComponentFailed = !$subject->overall_pass_rule && ($writtenFailed || $mcqFailed || $practicalFailed);
+
+            $maxPossible = $subject->written_total + $subject->mcq_total + $subject->practical_total;
+            $percentage  = $maxPossible > 0 ? ($total / $maxPossible) * 100 : 0;
+        }
+
+        // Fetch securely from our updated Model
+        $gradeData = GradeScale::getGradeForMark($percentage, $isComponentFailed);
+        $grade = $gradeData['grade'];
+        $gpa   = $gradeData['point'];
+
+        // 6. MATCH EXACTLY LIKE THE GENERATOR DOES
         $mark = Mark::firstOrNew([
             'exam_id'    => $examId,
             'subject_id' => $subjectId,
             'student_id' => $user->id,
         ]);
 
-        // 6. Update the fields on that exact row
+        // 7. Update the fields on that exact row
         $mark->academic_year_id = !empty($row['academic_year_id']) ? (int)$row['academic_year_id'] : ($enrollment?->academic_year_id);
         $mark->school_class_id  = $classId;
         $mark->section_id       = !empty($row['section_id']) ? (int)$row['section_id'] : ($enrollment?->section_id);

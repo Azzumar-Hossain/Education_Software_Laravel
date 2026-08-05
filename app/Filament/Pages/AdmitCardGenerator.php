@@ -8,9 +8,11 @@ use App\Models\Section;
 use App\Models\Exam;
 use App\Models\Enrollment;
 use App\Models\ClassTeacher;
+use App\Models\ExamRoutine;
 use Filament\Pages\Page;
 use Filament\Forms\Form;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Toggle;
 use Filament\Forms\Components\Grid;
 use Filament\Forms\Components\Section as FormSection;
 use Filament\Forms\Contracts\HasForms;
@@ -29,6 +31,14 @@ class AdmitCardGenerator extends Page implements HasForms
 
     public ?array $data = [];
     public $enrollments = [];
+    public $routines = [];
+    public bool $includeRoutine = false;
+
+    // 🌟 DYNAMIC HEADER VARIABLES FOR BLADE VIEW 🌟
+    public ?string $schoolLogo = null;
+    public ?string $schoolName = null;
+    public ?string $examName = null;
+    public ?string $academicYearName = null;
 
     // 🌟 1. DYNAMIC ACCESS CONTROL 🌟
     public static function canAccess(): bool
@@ -47,7 +57,19 @@ class AdmitCardGenerator extends Page implements HasForms
 
     public function mount(): void
     {
-        $this->form->fill();
+        $this->form->fill([
+            'include_routine' => false, // Default toggle to FALSE
+        ]);
+
+        // Fetch dynamic school logo and name from Settings or Fallback
+        if (class_exists('\App\Models\Setting')) {
+            $setting = \App\Models\Setting::first();
+            $this->schoolLogo = $setting?->logo ? asset('storage/' . $setting->logo) : asset('images/logo.png');
+            $this->schoolName = $setting?->site_name ?? 'Harimohan Govt. High School';
+        } else {
+            $this->schoolLogo = asset('images/logo.png');
+            $this->schoolName = 'Harimohan Govt. High School';
+        }
     }
 
     // 🌟 RESET BUTTON SYSTEM
@@ -59,8 +81,12 @@ class AdmitCardGenerator extends Page implements HasForms
                 ->icon('heroicon-m-arrow-path')
                 ->color('gray')
                 ->action(function () {
-                    $this->form->fill();
+                    $this->form->fill([
+                        'include_routine' => false,
+                    ]);
                     $this->enrollments = [];
+                    $this->routines = [];
+                    $this->includeRoutine = false;
                     
                     \Filament\Notifications\Notification::make()
                         ->title('Filters Reset')
@@ -129,6 +155,13 @@ class AdmitCardGenerator extends Page implements HasForms
                                 })
                                 ->nullable(),
                         ]),
+
+                        // 🌟 3. OPTIONAL ROUTINE TOGGLE SWITCH 🌟
+                        Toggle::make('include_routine')
+                            ->label('Attach Exam Routine under Admit Card?')
+                            ->helperText('Enable to print 1 Admit Card per page with full exam routine attached.')
+                            ->default(false)
+                            ->inline(false),
                     ]),
             ]);
     }
@@ -137,6 +170,12 @@ class AdmitCardGenerator extends Page implements HasForms
     {
         $this->validate();
         $inputs = $this->data;
+
+        $this->includeRoutine = (bool) ($inputs['include_routine'] ?? false);
+
+        // Header titles
+        $this->examName = Exam::find($inputs['exam_id'])?->name ?? 'EXAM';
+        $this->academicYearName = AcademicYear::find($inputs['academic_year_id'])?->name ?? '';
 
         $user = auth()->user();
         $query = Enrollment::with(['user', 'schoolClass', 'section'])
@@ -156,7 +195,20 @@ class AdmitCardGenerator extends Page implements HasForms
             $query->when($inputs['section_id'], fn($q, $sectionId) => $q->where('section_id', $sectionId));
         }
 
-        $this->enrollments = $query->get();
+        $this->enrollments = $query->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')->get();
+
+        // 🌟 FETCH ROUTINE ONLY IF TOGGLE IS SWITCHED ON 🌟
+        if ($this->includeRoutine) {
+            $this->routines = ExamRoutine::with('subject')
+                ->where('academic_year_id', $inputs['academic_year_id'])
+                ->where('school_class_id', $inputs['school_class_id'])
+                ->where('exam_id', $inputs['exam_id'])
+                ->orderBy('exam_date', 'asc')
+                ->orderBy('start_time', 'asc')
+                ->get();
+        } else {
+            $this->routines = [];
+        }
 
         if ($this->enrollments->isEmpty()) {
             \Filament\Notifications\Notification::make()

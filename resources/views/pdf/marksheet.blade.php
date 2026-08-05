@@ -37,26 +37,35 @@
     $className = strtolower($enrollment->schoolClass->name ?? '');
     $has4thSubjectColumn = str_contains($className, '9') || str_contains($className, '10');
 
-    // 1. Helper functions
-    $getGrade = function($perc) {
-        if($perc >= 80) return 'A+';
-        if($perc >= 70) return 'A';
-        if($perc >= 60) return 'A-';
-        if($perc >= 50) return 'B';
-        if($perc >= 40) return 'C';
-        if($perc >= 33) return 'D';
-        return 'F';
+    // 🌟 1. DYNAMIC GRADE AND FAIL CHECKER FUNCTIONS 🌟
+    $getGradeData = function($percentage, $isComponentFailed = false) {
+        return \App\Models\GradeScale::getGradeForMark($percentage, $isComponentFailed);
     };
 
-    $getGPA = function($perc) {
-        if($perc >= 80) return '5.00';
-        if($perc >= 70) return '4.00';
-        if($perc >= 60) return '3.50';
-        if($perc >= 50) return '3.00';
-        if($perc >= 40) return '2.00';
-        if($perc >= 33) return '1.00';
-        return '0.00';
-    };
+    // 🌟 FULLY CORRECTED COMPONENT FAIL CHECKER (SUPPORTS EXAM OVERRIDES & DB GRADES) 🌟
+        $checkComponentFail = function($markObj, $examId) {
+            if (!$markObj || !$markObj->subject) return false;
+            
+            // 1. Trust the database: If Marks Entry already saved an 'F', enforce it.
+            if ($markObj->grade === 'F') return true;
+
+            // 2. Fetch specific exam rules (supports Custom Exam Rules overrides)
+            $subject = $markObj->subject;
+            $rules = $subject->getMarksForExam($examId); 
+            
+            $overallPass = $rules['overall_pass_rule'] ?? $subject->overall_pass_rule ?? false;
+            if ($overallPass) return false;
+            
+            $wPass = $rules['written_pass'] ?? $subject->written_pass ?? 0;
+            $mPass = $rules['mcq_pass'] ?? $subject->mcq_pass ?? 0;
+            $pPass = $rules['practical_pass'] ?? $subject->practical_pass ?? 0;
+            
+            $wFail = ($wPass > 0) && ((float)$markObj->written_mark < (float)$wPass);
+            $mFail = ($mPass > 0) && ((float)$markObj->mcq_mark < (float)$mPass);
+            $pFail = ($pPass > 0) && ((float)$markObj->practical_mark < (float)$pPass);
+            
+            return $wFail || $mFail || $pFail;
+        };
 
     $getHighest = function($subjectId, $column) use ($marks) {
         if ($marks->isEmpty()) return '--';
@@ -101,7 +110,9 @@
                 }
             }
             $mark->marks_obtained = round($cumulativeObtained, 2);
-            $mark->grade = $getGrade(($mark->marks_obtained / $mainMax) * 100);
+            $isComponentFailed = $checkComponentFail($mark);
+            $gradeData = $getGradeData(($mark->marks_obtained / $mainMax) * 100, $isComponentFailed);
+            $mark->grade = $gradeData['grade'];
         }
     }
 
@@ -132,7 +143,9 @@
             $combinedMax = $max1 + $max2;
             $combinedObt = $mark->marks_obtained + $partnerMark->marks_obtained;
             $combinedPerc = $combinedMax > 0 ? ($combinedObt / $combinedMax) * 100 : 0;
-            $gpa = $getGPA($combinedPerc);
+            
+            $isComponentFailed = $checkComponentFail($mark) || $checkComponentFail($partnerMark);
+            $gradeData = $getGradeData($combinedPerc, $isComponentFailed);
 
             $groupedMarks[] = [
                 'is_combined' => true,
@@ -143,22 +156,23 @@
                 'max2' => $max2,
                 'combined_max' => $combinedMax,
                 'combined_obt' => $combinedObt,
-                'combined_grade' => $getGrade($combinedPerc),
-                'gpa' => $gpa
+                'combined_grade' => $gradeData['grade'],
+                'gpa' => number_format($gradeData['point'], 2)
             ];
             $processedIds[] = $mark->id;
             $processedIds[] = $partnerMark->id;
         } else {
             $perc = $max1 > 0 ? ($mark->marks_obtained / $max1) * 100 : 0;
-            $gpa = $getGPA($perc);
+            $isComponentFailed = $checkComponentFail($mark);
+            $gradeData = $getGradeData($perc, $isComponentFailed);
 
             $groupedMarks[] = [
                 'is_combined' => false,
                 'subject_model' => $mark->subject,
                 'paper1' => $mark,
                 'max1' => $max1,
-                'combined_grade' => $getGrade($perc),
-                'gpa' => $gpa
+                'combined_grade' => $gradeData['grade'],
+                'gpa' => number_format($gradeData['point'], 2)
             ];
             $processedIds[] = $mark->id;
         }
@@ -169,7 +183,10 @@
         return $r['full_marks'] > 0 ? $r['full_marks'] : 100;
     });
     $totalObtained = $marks->sum('marks_obtained');
-    $hasFailed = $marks->where('grade', 'F')->count() > 0;
+    
+    // Dynamic failure calculation based on strictly evaluated grouped marks
+    $failedSubjectsCount = count(array_filter($groupedMarks, fn($g) => $g['combined_grade'] === 'F'));
+    $hasFailed = $failedSubjectsCount > 0;
 
     // --- 4. SEPARATE CORE AND 4TH/OPTIONAL SUBJECTS ---
     $coreGroupedMarks = [];
@@ -227,7 +244,6 @@
     }
 
     // --- 🌟 6. GENERATE QR CODE PAYLOAD 🌟 ---
-    // ✅ AFTER (Calculates grade strictly from Final GPA):
     $finalGPA = $has4thSubjectColumn ? $gpaWith4th : $gpaWithout4th;
 
     $getGradeFromGPA = function($gpaVal, $hasFailed) {
@@ -242,7 +258,7 @@
         return 'F';
     };
 
-    $finalGrade = $getGradeFromGPA($finalGPA, $hasFailed);
+    $finalGrade = $getGradeFromGPA($finalGPA, $hasCoreFail);
 
     $qrPayload = "User ID: " . ($enrollment->user->student_id ?? 'N/A') . "\n"
         . "Name: " . strtoupper($enrollment->user->name) . "\n"
@@ -581,7 +597,6 @@
             <tr><td class="info-label">Exam Year:</td><td class="info-value">{{ $enrollment->academicYear->name }}</td></tr>
           </table>
         </td>
-        <!-- 🌟 DYNAMIC QR CODE CONTAINER (RED HIGHLIGHTED SPOT) 🌟 -->
         <td style="width: 19%; text-align: right; vertical-align: middle;">
           <div class="qr-code-wrapper">
             <img src="{{ $qrCodeUrl }}" alt="Verification QR Code" class="qr-code-img">
@@ -647,8 +662,8 @@
 
               <td rowspan="2">{{ number_format($group['combined_max'], 0) }}</td>
               <td rowspan="2" style="font-weight: bold;">{{ number_format($group['combined_obt'], 1) }}</td>
-              <td rowspan="2" style="font-weight: bold;" class="highlight-green">{{ $group['gpa'] }}</td>
-              <td rowspan="2" style="font-weight: bold;" class="highlight-green">{{ $group['combined_grade'] }}</td>
+              <td rowspan="2" style="font-weight: bold;" class="{{ $group['combined_grade'] === 'F' ? 'grade-f' : 'highlight-green' }}">{{ $group['gpa'] }}</td>
+              <td rowspan="2" style="font-weight: bold;" class="{{ $group['combined_grade'] === 'F' ? 'grade-f' : 'highlight-green' }}">{{ $group['combined_grade'] }}</td>
 
               @if(!$hasRenderedSideAggregateBlock)
                 @if($has4thSubjectColumn)
@@ -678,7 +693,7 @@
               <td>{{ number_format($group['paper1']->marks_obtained, 1) }}</td>
 
               <td>{{ number_format($group['max1'], 0) }}</td><td>{{ number_format($group['paper1']->marks_obtained, 1) }}</td>
-              <td style="font-weight: bold;">{{ $group['gpa'] }}</td>
+              <td style="font-weight: bold;" class="{{ $group['combined_grade'] === 'F' ? 'grade-f' : '' }}">{{ $group['gpa'] }}</td>
               <td style="font-weight: bold;" class="{{ $group['combined_grade'] === 'F' ? 'grade-f' : 'highlight-green' }}">{{ $group['combined_grade'] }}</td>
 
               @if(!$hasRenderedSideAggregateBlock)
@@ -715,7 +730,7 @@
               <td>{{ number_format($group['paper1']->marks_obtained, 1) }}</td>
 
               <td>{{ number_format($group['max1'], 0) }}</td><td>{{ number_format($group['paper1']->marks_obtained, 1) }}</td>
-              <td style="font-weight: bold;">{{ $group['gpa'] }}</td>
+              <td style="font-weight: bold;" class="{{ $group['combined_grade'] === 'F' ? 'grade-f' : '' }}">{{ $group['gpa'] }}</td>
               <td style="font-weight: bold;" class="{{ $group['combined_grade'] === 'F' ? 'grade-f' : 'highlight-green' }}">{{ $group['combined_grade'] }}</td>
             </tr>
           @endforeach
@@ -744,7 +759,7 @@
         <td style="width: 2%;"></td>
         <td style="width: 49%;">
           <table class="summary-block-matrix">
-            <tr><td class="summary-lbl">Failed Subject(s)</td><td style="font-weight: bold; color: {{ $hasFailed ? 'red' : 'green' }}">{{ $marks->where('grade', 'F')->count() }}</td></tr>
+            <tr><td class="summary-lbl">Failed Subject(s)</td><td style="font-weight: bold; color: {{ $hasFailed ? 'red' : 'green' }}">{{ $failedSubjectsCount }}</td></tr>
             <tr><td class="summary-lbl">Working Days</td><td></td></tr>
             <tr><td class="summary-lbl">Present Days</td><td></td></tr>
           </table>

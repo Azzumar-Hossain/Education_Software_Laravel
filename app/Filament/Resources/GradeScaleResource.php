@@ -1,8 +1,8 @@
 <?php
 
-namespace App\Filament\Resources; // 🌟 FIXED: Changed namespace from ...\Pages to the correct parent folder
+namespace App\Filament\Resources;
 
-use App\Filament\Resources\GradeScaleResource\Pages as GradeScalePages; // Unique alias to prevent duplicate name crashes
+use App\Filament\Resources\GradeScaleResource\Pages as GradeScalePages;
 use App\Models\GradeScale;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -23,30 +23,37 @@ class GradeScaleResource extends Resource
     {
         return $form
             ->schema([
-                Forms\Components\Card::make()->schema([
-                    Forms\Components\TextInput::make('letter_grade')
-                        ->label('Letter Grade Name')
-                        ->placeholder('e.g., A+, A, A-, Fail')
-                        ->required(),
-                    Forms\Components\Grid::make(2)->schema([
-                        Forms\Components\TextInput::make('min_mark')
-                            ->label('Minimum Marks (%)')
-                            ->numeric()
+                Forms\Components\Section::make('Grade Scale Configuration') // 🌟 Updated Card to Section
+                    ->schema([
+                        Forms\Components\TextInput::make('letter_grade')
+                            ->label('Letter Grade Name')
+                            ->placeholder('e.g., A+, A, A-, F')
                             ->required(),
-                        Forms\Components\TextInput::make('max_mark')
-                            ->label('Maximum Marks (%)')
+
+                        Forms\Components\Grid::make(2)->schema([
+                            Forms\Components\TextInput::make('min_mark')
+                                ->label('Minimum Marks (%)')
+                                ->numeric()
+                                ->required(),
+
+                            Forms\Components\TextInput::make('max_mark')
+                                ->label('Maximum Marks (%)')
+                                ->numeric()
+                                ->required(),
+                        ]),
+
+                        Forms\Components\TextInput::make('grade_point')
+                            ->label('Grade Point Value (GPA Value)')
                             ->numeric()
+                            ->step('0.01') // Allows precise decimal inputs like 3.50
+                            ->placeholder('e.g., 5.00, 4.00, 0.00')
                             ->required(),
-                    ]),
-                    Forms\Components\TextInput::make('grade_point')
-                        ->label('Grade Point Value (GPA Value)')
-                        ->numeric()
-                        ->placeholder('e.g., 5.00, 4.00, 0.00')
-                        ->required(),
-                    Forms\Components\Toggle::make('is_fail_grade')
-                        ->label('Mark as Failing Grade')
-                        ->helperText('Enabling this option will automatically fail a student globally if they drop into this range.'),
-                ])
+
+                        Forms\Components\Toggle::make('is_fail_grade')
+                            ->label('Mark as Failing Grade')
+                            ->helperText('Enabling this option will automatically fail a student globally if they drop into this range.')
+                            ->default(false),
+                    ])
             ]);
     }
 
@@ -57,19 +64,28 @@ class GradeScaleResource extends Resource
                 Tables\Columns\TextColumn::make('letter_grade')
                     ->label('Grade')
                     ->badge()
-                    ->color('primary'),
+                    ->color(fn (string $state): string => match ($state) {
+                        'A+' => 'success',
+                        'A', 'A-' => 'info',
+                        'B', 'C', 'D' => 'warning',
+                        'F' => 'danger',
+                        default => 'primary',
+                    }),
                     
                 Tables\Columns\TextColumn::make('min_mark')
                     ->label('Min %')
-                    ->fontFamily('mono'), // 🌟 FIXED: Changed from ->fontMono()
+                    ->fontFamily('mono')
+                    ->sortable(),
                     
                 Tables\Columns\TextColumn::make('max_mark')
                     ->label('Max %')
-                    ->fontFamily('mono'), // 🌟 FIXED: Changed from ->fontMono()
+                    ->fontFamily('mono')
+                    ->sortable(),
                     
                 Tables\Columns\TextColumn::make('grade_point')
                     ->label('Grade Points (GPA)')
-                    ->fontFamily('mono') // 🌟 FIXED: Changed from ->fontMono()
+                    ->fontFamily('mono')
+                    ->numeric(2) // 🌟 Ensures formatted output (e.g. 5.00, 3.50)
                     ->badge()
                     ->color('success'),
                     
@@ -77,6 +93,7 @@ class GradeScaleResource extends Resource
                     ->label('Triggers Retained Status')
                     ->boolean(),
             ])
+            ->defaultSort('min_mark', 'desc') // Sorts from A+ (80%) down to F (0%)
             ->filters([])
             ->actions([
                 Tables\Actions\EditAction::make(),
@@ -87,7 +104,6 @@ class GradeScaleResource extends Resource
     public static function getPages(): array
     {
         return [
-            // 🌟 FIXED: Points to the unique alias target map cleanly
             'index' => GradeScalePages\ManageGradeScales::route('/'),
         ];
     }
