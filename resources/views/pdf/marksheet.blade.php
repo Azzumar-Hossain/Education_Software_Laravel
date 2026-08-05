@@ -43,35 +43,35 @@
     };
 
     // 🌟 FULLY CORRECTED COMPONENT FAIL CHECKER (SUPPORTS EXAM OVERRIDES & DB GRADES) 🌟
-        $checkComponentFail = function($markObj, $examId) {
-            if (!$markObj || !$markObj->subject) return false;
-            
-            // 1. Trust the database: If Marks Entry already saved an 'F', enforce it.
-            if ($markObj->grade === 'F') return true;
+    $checkComponentFail = function($markObj, $examId) {
+        if (!$markObj || !$markObj->subject) return false;
+        
+        // 1. Trust the database: If Marks Entry already saved an 'F', enforce it.
+        if (trim($markObj->grade) === 'F') return true;
 
-            // 2. Fetch specific exam rules (supports Custom Exam Rules overrides)
-            $subject = $markObj->subject;
-            $rules = $subject->getMarksForExam($examId); 
-            
-            $overallPass = $rules['overall_pass_rule'] ?? $subject->overall_pass_rule ?? false;
-            if ($overallPass) return false;
-            
-            $wPass = $rules['written_pass'] ?? $subject->written_pass ?? 0;
-            $mPass = $rules['mcq_pass'] ?? $subject->mcq_pass ?? 0;
-            $pPass = $rules['practical_pass'] ?? $subject->practical_pass ?? 0;
-            
-            $wFail = ($wPass > 0) && ((float)$markObj->written_mark < (float)$wPass);
-            $mFail = ($mPass > 0) && ((float)$markObj->mcq_mark < (float)$mPass);
-            $pFail = ($pPass > 0) && ((float)$markObj->practical_mark < (float)$pPass);
-            
-            return $wFail || $mFail || $pFail;
-        };
+        // 2. Fetch specific exam rules (supports Custom Exam Rules overrides)
+        $subject = $markObj->subject;
+        $rules = $subject->getMarksForExam($examId); 
+        
+        $overallPass = $rules['overall_pass_rule'] ?? $subject->overall_pass_rule ?? false;
+        if ($overallPass) return false;
+        
+        $wPass = $rules['written_pass'] ?? $subject->written_pass ?? 0;
+        $mPass = $rules['mcq_pass'] ?? $subject->mcq_pass ?? 0;
+        $pPass = $rules['practical_pass'] ?? $subject->practical_pass ?? 0;
+        
+        $wFail = ($wPass > 0) && ((float)$markObj->written_mark < (float)$wPass);
+        $mFail = ($mPass > 0) && ((float)$markObj->mcq_mark < (float)$mPass);
+        $pFail = ($pPass > 0) && ((float)$markObj->practical_mark < (float)$pPass);
+        
+        return $wFail || $mFail || $pFail;
+    };
 
-    $getHighest = function($subjectId, $column) use ($marks) {
+    $getHighest = function($subjectId, $column) use ($marks, $exam) {
         if ($marks->isEmpty()) return '--';
         $sampleMark = $marks->first();
         $highest = $sampleMark->newQuery()
-            ->where('exam_id', $sampleMark->exam_id)
+            ->where('exam_id', $exam->id)
             ->where('subject_id', $subjectId)
             ->max($column);
         return ($highest !== null && $highest > 0) ? number_format($highest, 1) : '--';
@@ -109,10 +109,18 @@
                     $cumulativeObtained += $childWeighted;
                 }
             }
+            
+            $isComponentFailed = trim($mark->grade) === 'F';
             $mark->marks_obtained = round($cumulativeObtained, 2);
-            $isComponentFailed = $checkComponentFail($mark);
-            $gradeData = $getGradeData(($mark->marks_obtained / $mainMax) * 100, $isComponentFailed);
-            $mark->grade = $gradeData['grade'];
+            
+            if ($isComponentFailed) {
+                $mark->grade = 'F';
+                $mark->gpa = 0.00;
+            } else {
+                $gradeData = $getGradeData(($mark->marks_obtained / $mainMax) * 100, false);
+                $mark->grade = $gradeData['grade'];
+                $mark->gpa = $gradeData['point'];
+            }
         }
     }
 
@@ -144,8 +152,17 @@
             $combinedObt = $mark->marks_obtained + $partnerMark->marks_obtained;
             $combinedPerc = $combinedMax > 0 ? ($combinedObt / $combinedMax) * 100 : 0;
             
-            $isComponentFailed = $checkComponentFail($mark) || $checkComponentFail($partnerMark);
-            $gradeData = $getGradeData($combinedPerc, $isComponentFailed);
+            // 🌟 Trust the DB: If either paper failed components, the combined fails
+            $isComponentFailed = (trim($mark->grade) === 'F' || trim($partnerMark->grade) === 'F');
+            
+            if ($isComponentFailed) {
+                $cGrade = 'F';
+                $cGpa = '0.00';
+            } else {
+                $gradeData = $getGradeData($combinedPerc, false);
+                $cGrade = $gradeData['grade'];
+                $cGpa = number_format($gradeData['point'], 2);
+            }
 
             $groupedMarks[] = [
                 'is_combined' => true,
@@ -156,23 +173,20 @@
                 'max2' => $max2,
                 'combined_max' => $combinedMax,
                 'combined_obt' => $combinedObt,
-                'combined_grade' => $gradeData['grade'],
-                'gpa' => number_format($gradeData['point'], 2)
+                'combined_grade' => $cGrade,
+                'gpa' => $cGpa
             ];
             $processedIds[] = $mark->id;
             $processedIds[] = $partnerMark->id;
         } else {
-            $perc = $max1 > 0 ? ($mark->marks_obtained / $max1) * 100 : 0;
-            $isComponentFailed = $checkComponentFail($mark);
-            $gradeData = $getGradeData($perc, $isComponentFailed);
-
+            // 🌟 ULTIMATE FIX: 100% BLIND TRUST IN THE DATABASE FOR SINGLE SUBJECTS 🌟
             $groupedMarks[] = [
                 'is_combined' => false,
                 'subject_model' => $mark->subject,
                 'paper1' => $mark,
                 'max1' => $max1,
-                'combined_grade' => $gradeData['grade'],
-                'gpa' => number_format($gradeData['point'], 2)
+                'combined_grade' => trim($mark->grade),
+                'gpa' => number_format((float)$mark->gpa, 2)
             ];
             $processedIds[] = $mark->id;
         }
@@ -597,6 +611,7 @@
             <tr><td class="info-label">Exam Year:</td><td class="info-value">{{ $enrollment->academicYear->name }}</td></tr>
           </table>
         </td>
+        <!-- 🌟 DYNAMIC QR CODE CONTAINER (RED HIGHLIGHTED SPOT) 🌟 -->
         <td style="width: 19%; text-align: right; vertical-align: middle;">
           <div class="qr-code-wrapper">
             <img src="{{ $qrCodeUrl }}" alt="Verification QR Code" class="qr-code-img">
@@ -624,11 +639,11 @@
           <th rowspan="2" style="width: 6%;">GPA</th>
         </tr>
         <tr class="sub-header">
-          <th>Full</th><th>Obt</th>
-          <th>Full</th><th>Obt</th>
-          <th>Full</th><th>Obt</th>
-          <th>Obt</th>
-          <th>Max</th><th>Obt</th>
+            <th>Full</th><th>Obt</th>
+            <th>Full</th><th>Obt</th>
+            <th>Full</th><th>Obt</th>
+            <th>Obt</th>
+            <th>Max</th><th>Obt</th>
         </tr>
       </thead>
       <tbody>
