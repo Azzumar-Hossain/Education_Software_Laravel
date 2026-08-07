@@ -41,11 +41,11 @@ class ClassTeacherResource extends Resource
                 // 🌟 2. CLASS TEACHER 🌟
                 Forms\Components\Select::make('teacher_id')
                     ->label('Class Teacher')
-                    ->options(
-                        User::whereIn('type', ['teacher', 'class_teacher'])
-                            ->orWhereHas('roles', fn ($q) => $q->whereIn('name', ['teacher', 'class_teacher']))
-                            ->pluck('name', 'id')
-                    )
+                    ->options(function () {
+                        return User::query()
+                            ->whereIn('type', ['teacher', 'class_teacher', 'subject_teacher'])
+                            ->pluck('name', 'id');
+                    })
                     ->searchable()
                     ->required(),
 

@@ -29,9 +29,16 @@ class TeacherAllocationResource extends Resource
     {
         return $form
             ->schema([
-                Forms\Components\Select::make('user_id')
+                Forms\Components\Select::make('user_id') // or 'teacher_id' depending on your schema
                     ->label('Teacher')
-                    ->options(User::where('type', 'teacher')->pluck('name', 'id'))
+                    ->options(function () {
+                        return User::query()
+                            // 🌟 INCLUDE ALL TEACHER TYPES (teacher, class_teacher, subject_teacher)
+                            ->whereIn('type', ['teacher', 'class_teacher', 'subject_teacher'])
+                            // OR if using Spatie roles:
+                            // ->whereHas('roles', fn ($q) => $q->whereIn('name', ['teacher', 'class_teacher', 'subject_teacher']))
+                            ->pluck('name', 'id');
+                    })
                     ->searchable()
                     ->required(),
 
