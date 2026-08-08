@@ -110,9 +110,23 @@
                             $combinedObt = $mark->marks_obtained + $partnerMark->marks_obtained;
                             $combinedPerc = $combinedMax > 0 ? ($combinedObt / $combinedMax) * 100 : 0;
                             
-                            // 🌟 Trust the DB: If either paper failed components, the combined fails
-                            $isComponentFailed = (trim($mark->grade) === 'F' || trim($partnerMark->grade) === 'F');
-                            
+                            // 🌟 1. COMBINED PASS RULE FOR PARTNER SUBJECTS (BANGLA/ENGLISH) 🌟
+                            // Calculate combined required pass marks from both paper rules
+                            $pass1 = $rules1['written_pass'] ?? $mark->subject->written_pass ?? 33;
+                            $pass2 = $rules2['written_pass'] ?? $partnerMark->subject->written_pass ?? 33;
+                            $combinedRequiredPass = $pass1 + $pass2; // e.g., 33 + 33 = 66
+
+                            // Check component pass for MCQ/Practical if present
+                            $mcq1Pass = $rules1['mcq_pass'] ?? $mark->subject->mcq_pass ?? 0;
+                            $mcq2Pass = $rules2['mcq_pass'] ?? $partnerMark->subject->mcq_pass ?? 0;
+                            $combinedMcqObt = ($mark->mcq_mark ?? 0) + ($partnerMark->mcq_mark ?? 0);
+                            $combinedMcqPass = $mcq1Pass + $mcq2Pass;
+
+                            $mcqFail = ($combinedMcqPass > 0) && ($combinedMcqObt < $combinedMcqPass);
+
+                            // The student passes as long as Combined Total Written >= 66 AND Combined MCQ >= Pass
+                            $isComponentFailed = ($combinedObt < $combinedRequiredPass) || $mcqFail;
+
                             if ($isComponentFailed) {
                                 $cGrade = 'F';
                                 $cGpa = '0.00';
@@ -137,7 +151,7 @@
                             $processedIds[] = $mark->id;
                             $processedIds[] = $partnerMark->id;
                         } else {
-                            // 🌟 ULTIMATE FIX: 100% BLIND TRUST IN THE DATABASE FOR SINGLE SUBJECTS 🌟
+                            // Single subject evaluation
                             $groupedMarks[] = [
                                 'is_combined' => false,
                                 'subject_model' => $mark->subject,
@@ -149,7 +163,7 @@
                             $processedIds[] = $mark->id;
                         }
                     }
-
+                    
                     // --- CALCULATE TERM-LEVEL GPA & GRADE WITHOUT 4TH SUBJECT ---
                     $termCoreGPAs = [];
                     $hasTermCoreFail = false;
