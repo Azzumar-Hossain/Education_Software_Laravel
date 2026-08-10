@@ -253,51 +253,76 @@ class PrintMarksheet extends Page implements HasForms
         $inputs = $this->data;
 
         if (empty($this->studentsList)) {
-            Notification::make()
-                ->title('Generate List First')
-                ->body('Please select filters and click "Generate Marksheet List" first.')
-                ->warning()
-                ->send();
+            Notification::make()->title('Generate List First')->warning()->send();
             return;
         }
 
-        $studentIds = array_column($this->studentsList, 'id');
+        // 🌟 1. EXTEND TIMEOUT & MEMORY LIMITS
+        ini_set('memory_limit', '1024M');
+        ini_set('pcre.backtrack_limit', '10000000');
+        set_time_limit(600);
 
+        $studentIds = array_column($this->studentsList, 'id');
+        
+        // 🌟 2. EAGER LOAD ENROLLMENTS
         $enrollments = Enrollment::with(['user', 'schoolClass', 'section', 'academicYear'])
             ->whereIn('id', $studentIds)
             ->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')
             ->get();
 
-        if ($enrollments->isEmpty()) {
-            Notification::make()
-                ->title('No Students Found')
-                ->warning()
-                ->send();
-            return;
-        }
-
+        $userIds = $enrollments->pluck('user_id')->unique()->filter();
         $exam = Exam::with('academicYear')->findOrFail($inputs['exam_id']);
-        $className = SchoolClass::find($inputs['school_class_id'])?->name ?? 'Class';
+
+        // 🌟 3. FETCH ALL MARKS IN ONE SINGLE QUERY
+        $allBatchMarks = Mark::with('subject')
+            ->whereIn('student_id', $userIds)
+            ->where('academic_year_id', $inputs['academic_year_id'])
+            ->where('school_class_id', $inputs['school_class_id'])
+            ->where('exam_id', $exam->id)
+            ->get()
+            ->groupBy('student_id');
+
+        $className   = SchoolClass::find($inputs['school_class_id'])?->name ?? 'Class';
         $sectionName = !empty($inputs['section_id']) ? Section::find($inputs['section_id'])?->name : 'All_Sections';
 
-        $pdf = \PDF::loadView('pdf.batch-marksheet', [
-            'enrollments' => $enrollments,
-            'exam'        => $exam,
-        ], [], [
-            'mode'              => 'utf-8',
-            'format'            => 'A4-P',
-            'margin_left'       => 5,
-            'margin_right'      => 5,
-            'margin_top'        => 5,
-            'margin_bottom'     => 5,
-            'autoScriptToLang'  => true,
-            'autoLangToFont'    => true,
+        // 🌟 4. INITIALIZE MPDF INSTANCE
+        $mpdf = new \Mpdf\Mpdf([
+            'mode'             => 'utf-8',
+            'format'           => 'A4-P',
+            'margin_left'      => 5,
+            'margin_right'     => 5,
+            'margin_top'       => 5,
+            'margin_bottom'    => 5,
+            'autoScriptToLang' => true,
+            'autoLangToFont'   => true,
+            'tempDir'          => storage_path('app/temp'),
         ]);
 
-        $fileName = "Batch_Marksheets_{$className}_{$sectionName}_" . date('Ymd') . ".pdf";
+        // 🌟 5. RENDER PAGES EFFICIENTLY
+        foreach ($enrollments as $index => $enrollment) {
+            $studentMarks = $allBatchMarks->get($enrollment->user_id) ?? collect();
+
+            $html = view('pdf.marksheet', [
+                'enrollment' => $enrollment,
+                'exam'       => $exam,
+                'marks'      => $studentMarks,
+            ])->render();
+
+            $mpdf->WriteHTML($html);
+
+            if ($index < count($enrollments) - 1) {
+                $mpdf->AddPage();
+            }
+        }
+
+        // 🌟 6. SANITIZE FILENAME TO PREVENT SYMFONY SLASHERRORS
+        $cleanClassName   = str_replace(['/', '\\', ' '], '_', $className);
+        $cleanSectionName = str_replace(['/', '\\', ' '], '_', $sectionName);
+
+        $fileName = "Batch_Marksheets_{$cleanClassName}_{$cleanSectionName}_" . date('Ymd') . ".pdf";
 
         return response()->streamDownload(
-            fn () => print($pdf->output()),
+            fn () => print($mpdf->Output('', 'S')),
             $fileName
         );
     }

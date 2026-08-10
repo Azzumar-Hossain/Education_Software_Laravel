@@ -10,6 +10,8 @@ use App\Models\Enrollment;
 use App\Models\Subject;
 use App\Models\Mark;
 use App\Models\ClassTeacher;
+use App\Models\StudyGroup;
+use App\Models\GradeScale;
 use Filament\Pages\Page;
 use Filament\Forms\Form;
 use Filament\Forms\Components\Select;
@@ -111,13 +113,12 @@ class TabulationSheet extends Page implements HasForms
                             Select::make('study_group')
                                 ->label('Study Group')
                                 ->options([
-                                    'Science'          => 'Science',
+                                    'Science'         => 'Science',
                                     'Arts/Humanities' => 'Arts / Humanities',
-                                    'Commerce'         => 'Commerce',
-                                    'General'          => 'General',
+                                    'Commerce'        => 'Commerce',
+                                    'General'         => 'General',
                                 ])->nullable(),
 
-                            // 🌟 DYNAMIC USER-SELECTABLE ROWS PER PAGE DROPDOWN 🌟
                             Select::make('rows_per_page')
                                 ->label('Rows / Page')
                                 ->options([
@@ -144,24 +145,48 @@ class TabulationSheet extends Page implements HasForms
         $groupName = $inputs['study_group'];
         $user = auth()->user();
 
-        // 1. Fetch available subjects mapped to this specific Class configuration
-        $this->subjects = Subject::whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $classId))
+        // 🌟 3. FETCH & FILTER SUBJECTS STRICTLY BASED ON STUDY GROUP 🌟
+        $boardSubjectOrder = [
+            '101', '102', '107', '108', '109', '127', '150', '111', '112', '154', 
+            '153', '140', '110', '126', '136', '137', '138', '134'
+        ];
+
+        $subjectQuery = Subject::whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $classId))
             ->where(function($query) use ($groupName) {
                 $query->whereNull('study_group_id')
                       ->when($groupName, function($q) use ($groupName) {
-                          $resolvedId = \App\Models\StudyGroup::where('name', $groupName)->first()?->id;
+                          $resolvedId = StudyGroup::where('name', $groupName)->first()?->id;
                           if($resolvedId) $q->orWhere('study_group_id', $resolvedId);
                       });
-            })
-            ->orderBy('code', 'asc')
-            ->get();
+            });
 
-        // 2. Load matching student roster rows
-        $query = Enrollment::where('school_class_id', $classId)
+        // Exclude General Science (127) for Science Group
+        if (strtolower($groupName) === 'science') {
+            $subjectQuery->where('code', '!=', '127')
+                         ->where('name', 'not like', '%General Science%')
+                         ->where('name', 'not like', '%সাধারণ বিজ্ঞান%');
+        }
+
+        // Exclude Pure Science subjects for Arts/Commerce
+        if (in_array(strtolower($groupName), ['arts/humanities', 'arts', 'humanities', 'commerce'])) {
+            $subjectQuery->whereNotIn('code', ['136', '137', '138']); // Physics, Chemistry, Biology
+        }
+
+        $allSubjects = $subjectQuery->get();
+
+        // Sort subjects according to Bangladesh National Curriculum Sequence
+        $this->subjects = $allSubjects->sortBy(function($sub) use ($boardSubjectOrder) {
+            $code = (string) ($sub->code ?? '');
+            $idx = array_search($code, $boardSubjectOrder);
+            return $idx !== false ? $idx : 999;
+        })->values();
+
+        // 🌟 4. LOAD MATCHING STUDENT ROSTER ROWS 🌟
+        $query = Enrollment::with(['user', 'schoolClass', 'section'])
+            ->where('school_class_id', $classId)
             ->where('academic_year_id', $inputs['academic_year_id'])
             ->when($groupName, fn($q, $g) => $q->where('study_group', $g));
 
-        // 🌟 Scope section filter strictly for Class Teachers
         if (!empty($inputs['section_id'])) {
             $query->where('section_id', $inputs['section_id']);
         } elseif ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
@@ -171,8 +196,89 @@ class TabulationSheet extends Page implements HasForms
             }
         }
 
-        $this->students = $query
-            ->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')
-            ->get();
+        $enrollments = $query->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')->get();
+
+        // 🌟 5. CALCULATE ACCURATE GPA, MARKS, AND GRADE PER STUDENT 🌟
+        $studentResults = [];
+
+        foreach ($enrollments as $enrollment) {
+            $marks = Mark::with('subject')
+                ->where('student_id', $enrollment->user_id)
+                ->where('academic_year_id', $inputs['academic_year_id'])
+                ->where('school_class_id', $classId)
+                ->where('exam_id', $inputs['exam_id'])
+                ->get();
+
+            $coreObtainedSum = 0.0;
+            $coreGPAs = [];
+            $hasCoreFail = false;
+            
+            $optionalBonusMarks = 0.0;
+            $optionalBonusPoints = 0.00;
+
+            foreach ($marks as $mark) {
+                if (!$mark->subject) continue;
+
+                $subName = strtolower($mark->subject->name ?? '');
+                $subType = strtolower($mark->subject->subject_type ?? $mark->subject->type ?? '');
+                $isOptional = (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional');
+
+                $obt = (float) $mark->marks_obtained;
+                $gp  = (float) $mark->gpa;
+
+                if ($isOptional) {
+                    // Rule 1: Add marks above 40 to Grand Total (Obtained - 40)
+                    if ($obt > 40.0) {
+                        $optionalBonusMarks = $obt - 40.0;
+                    }
+
+                    // Rule 2: Add GPA points above 2.00 to GPA accumulator (GP - 2.00)
+                    if ($gp > 2.00) {
+                        $optionalBonusPoints = $gp - 2.00;
+                    }
+                    // Optional subject fail DOES NOT set $hasCoreFail
+                } else {
+                    $coreObtainedSum += $obt;
+
+                    if (trim($mark->grade) === 'F') {
+                        $hasCoreFail = true;
+                    }
+                    $coreGPAs[] = $gp;
+                }
+            }
+
+            // Calculate Grand Total (Core Sum + 4th Sub Marks above 40)
+            $grandTotalMarks = $coreObtainedSum + $optionalBonusMarks;
+
+            // Calculate Final GPA & Grade
+            $coreCount = count($coreGPAs);
+            if ($hasCoreFail || $coreCount === 0) {
+                $finalGPA = '0.00';
+                $finalGrade = 'F';
+            } else {
+                $rawGpaSum = array_sum($coreGPAs) + $optionalBonusPoints;
+                $calcGpa = min(5.00, $rawGpaSum / $coreCount);
+                $finalGPA = number_format($calcGpa, 2);
+
+                if ($calcGpa >= 5.00) $finalGrade = 'A+';
+                elseif ($calcGpa >= 4.00) $finalGrade = 'A';
+                elseif ($calcGpa >= 3.50) $finalGrade = 'A-';
+                elseif ($calcGpa >= 3.00) $finalGrade = 'B';
+                elseif ($calcGpa >= 2.00) $finalGrade = 'C';
+                elseif ($calcGpa >= 1.00) $finalGrade = 'D';
+                else $finalGrade = 'F';
+            }
+
+            $studentResults[] = [
+                'enrollment'    => $enrollment,
+                'marks'         => $marks->keyBy('subject_id'),
+                'grand_total'   => $grandTotalMarks,
+                'gpa'           => $finalGPA,
+                'grade'         => $finalGrade,
+                'has_core_fail' => $hasCoreFail,
+            ];
+        }
+
+        $this->students = $studentResults;
     }
 }

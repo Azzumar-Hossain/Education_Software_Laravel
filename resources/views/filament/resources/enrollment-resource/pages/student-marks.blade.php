@@ -4,7 +4,8 @@
             ->where('student_id', $record->user_id)
             ->where('academic_year_id', $record->academic_year_id)
             ->where('school_class_id', $record->school_class_id)
-            ->get();
+            ->get()
+            ->sortBy(fn($m) => (int) ($m->subject->code ?? 999));
             
         $marksGrouped = $allMarks->groupBy('exam_id');
         
@@ -110,21 +111,17 @@
                             $combinedObt = $mark->marks_obtained + $partnerMark->marks_obtained;
                             $combinedPerc = $combinedMax > 0 ? ($combinedObt / $combinedMax) * 100 : 0;
                             
-                            // 🌟 1. COMBINED PASS RULE FOR PARTNER SUBJECTS (BANGLA/ENGLISH) 🌟
-                            // Calculate combined required pass marks from both paper rules
+                            // COMBINED PASS RULE FOR PARTNER SUBJECTS (BANGLA/ENGLISH): 66/200
                             $pass1 = $rules1['written_pass'] ?? $mark->subject->written_pass ?? 33;
                             $pass2 = $rules2['written_pass'] ?? $partnerMark->subject->written_pass ?? 33;
-                            $combinedRequiredPass = $pass1 + $pass2; // e.g., 33 + 33 = 66
+                            $combinedRequiredPass = $pass1 + $pass2;
 
-                            // Check component pass for MCQ/Practical if present
                             $mcq1Pass = $rules1['mcq_pass'] ?? $mark->subject->mcq_pass ?? 0;
                             $mcq2Pass = $rules2['mcq_pass'] ?? $partnerMark->subject->mcq_pass ?? 0;
                             $combinedMcqObt = ($mark->mcq_mark ?? 0) + ($partnerMark->mcq_mark ?? 0);
                             $combinedMcqPass = $mcq1Pass + $mcq2Pass;
 
                             $mcqFail = ($combinedMcqPass > 0) && ($combinedMcqObt < $combinedMcqPass);
-
-                            // The student passes as long as Combined Total Written >= 66 AND Combined MCQ >= Pass
                             $isComponentFailed = ($combinedObt < $combinedRequiredPass) || $mcqFail;
 
                             if ($isComponentFailed) {
@@ -135,7 +132,7 @@
                                 $cGrade = $gradeData['grade'];
                                 $cGpa = number_format($gradeData['point'], 2);
                             }
-                            
+
                             $groupedMarks[] = [
                                 'is_combined' => true,
                                 'subject_model' => $mark->subject,
@@ -151,7 +148,6 @@
                             $processedIds[] = $mark->id;
                             $processedIds[] = $partnerMark->id;
                         } else {
-                            // Single subject evaluation
                             $groupedMarks[] = [
                                 'is_combined' => false,
                                 'subject_model' => $mark->subject,
@@ -163,37 +159,47 @@
                             $processedIds[] = $mark->id;
                         }
                     }
-                    
-                    // --- CALCULATE TERM-LEVEL GPA & GRADE WITHOUT 4TH SUBJECT ---
+
+                    // --- CALCULATE TERM-LEVEL GPA & GRADE WITH 4TH SUBJECT RULES ---
                     $termCoreGPAs = [];
                     $hasTermCoreFail = false;
+                    $optionalBonusPoints = 0.00;
 
                     foreach ($groupedMarks as $gMark) {
                         $subName = strtolower($gMark['subject_model']->name ?? '');
                         $subType = strtolower($gMark['subject_model']->subject_type ?? $gMark['subject_model']->type ?? '');
-                        
-                        // Detect and exclude 4th/Optional subjects
-                        if (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional') {
-                            continue;
-                        }
+                        $isOptional = (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional');
 
-                        if ($gMark['combined_grade'] === 'F') {
-                            $hasTermCoreFail = true;
+                        if ($isOptional) {
+                            $points = (float) $gMark['gpa'];
+                            if ($points > 2.00) {
+                                $optionalBonusPoints = $points - 2.00;
+                            }
+                        } else {
+                            if ($gMark['combined_grade'] === 'F') {
+                                $hasTermCoreFail = true;
+                            }
+                            $termCoreGPAs[] = (float) $gMark['gpa'];
                         }
-                        $termCoreGPAs[] = (float) $gMark['gpa'];
                     }
 
                     $termCoreCount = count($termCoreGPAs);
-                    $termGPAWithout4th = ($hasTermCoreFail || $termCoreCount === 0) ? '0.00' : number_format(array_sum($termCoreGPAs) / $termCoreCount, 2);
-                    
-                    $termGradeWithout4th = 'F';
-                    $termGpaFloat = (float) $termGPAWithout4th;
-                    if ($termGpaFloat >= 5.00) $termGradeWithout4th = 'A+';
-                    elseif ($termGpaFloat >= 4.00) $termGradeWithout4th = 'A';
-                    elseif ($termGpaFloat >= 3.50) $termGradeWithout4th = 'A-';
-                    elseif ($termGpaFloat >= 3.00) $termGradeWithout4th = 'B';
-                    elseif ($termGpaFloat >= 2.00) $termGradeWithout4th = 'C';
-                    elseif ($termGpaFloat >= 1.00) $termGradeWithout4th = 'D';
+                    if ($hasTermCoreFail || $termCoreCount === 0) {
+                        $termGPAWithout4th = '0.00';
+                        $termGradeWithout4th = 'F';
+                    } else {
+                        $rawGpaSum = array_sum($termCoreGPAs) + $optionalBonusPoints;
+                        $calcGpa = min(5.00, $rawGpaSum / $termCoreCount);
+                        $termGPAWithout4th = number_format($calcGpa, 2);
+                        
+                        if ($calcGpa >= 5.00) $termGradeWithout4th = 'A+';
+                        elseif ($calcGpa >= 4.00) $termGradeWithout4th = 'A';
+                        elseif ($calcGpa >= 3.50) $termGradeWithout4th = 'A-';
+                        elseif ($calcGpa >= 3.00) $termGradeWithout4th = 'B';
+                        elseif ($calcGpa >= 2.00) $termGradeWithout4th = 'C';
+                        elseif ($calcGpa >= 1.00) $termGradeWithout4th = 'D';
+                        else $termGradeWithout4th = 'F';
+                    }
                 @endphp
                 
                 <div class="bg-white dark:bg-gray-900 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
@@ -201,7 +207,7 @@
                         <div>
                             <h2 class="text-lg font-bold text-gray-800 dark:text-white">{{ $examName }}</h2>
                             <p class="text-xs font-semibold text-gray-500 mt-0.5">
-                                Core GPA (Without 4th Sub): <span class="text-blue-600 dark:text-blue-400 font-bold font-mono">{{ $termGPAWithout4th }}</span> 
+                                Core GPA: <span class="text-blue-600 dark:text-blue-400 font-bold font-mono">{{ $termGPAWithout4th }}</span> 
                                 | Core Grade: <span class="text-blue-600 dark:text-blue-400 font-extrabold">{{ $termGradeWithout4th }}</span>
                             </p>
                         </div>
@@ -306,113 +312,71 @@
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-indigo-100 dark:divide-gray-700">
+                            
                             @php 
                                 $grandTotalMax = 0; 
-                                $grandTotalObtained = 0; 
+                                $coreObtainedSum = 0.0; 
+                                $optionalBonusMarksFinal = 0.0;
                                 
                                 $validAllMarks = $allMarks->filter(fn($m) => in_array($m->exam_id, $mainExamIds));
                                 $finalGroupedMarks = [];
                                 $processedFinalIds = [];
-                                
-                                foreach($validAllMarks as $mark) {
-                                    if(in_array($mark->subject_id, $processedFinalIds)) continue;
-                                    
-                                    $partnerMark = null;
-                                    $partnerSubjectId = null;
-                                    
-                                    if ($mark->subject->linked_subject_id) {
-                                        $partnerSubjectId = $mark->subject->linked_subject_id;
-                                        $partnerMark = $validAllMarks->firstWhere('subject_id', $partnerSubjectId);
-                                    } else {
-                                        $partnerMark = $validAllMarks->where('subject.linked_subject_id', $mark->subject_id)->first();
-                                        if ($partnerMark) {
-                                            $partnerSubjectId = $partnerMark->subject_id;
-                                            $temp = $mark; $mark = $partnerMark; $partnerMark = $temp;
-                                        }
-                                    }
-                                    
-                                    if ($partnerMark && $partnerSubjectId) {
-                                        $paper1Marks = $validAllMarks->where('subject_id', $mark->subject_id);
-                                        $p1Max = $paper1Marks->sum(function($m) {
-                                            $rules = $m->subject->getMarksForExam($m->exam_id);
-                                            return $rules['full_marks'] > 0 ? $rules['full_marks'] : 100;
-                                        });
-                                        $p1Obt = $paper1Marks->sum('marks_obtained');
-                                        
-                                        $paper2Marks = $validAllMarks->where('subject_id', $partnerSubjectId);
-                                        $p2Max = $paper2Marks->sum(function($m) {
-                                            $rules = $m->subject->getMarksForExam($m->exam_id);
-                                            return $rules['full_marks'] > 0 ? $rules['full_marks'] : 100;
-                                        });
-                                        $p2Obt = $paper2Marks->sum('marks_obtained');
-                                        
-                                        $combinedMax = ($p1Max + $p2Max) / 2;
-                                        $combinedObt = ($p1Obt + $p2Obt) / 2;
-                                        
-                                        $displayName = trim(str_replace([' 1st', ' 2nd', ' Paper', ' I', ' II'], '', $mark->subject->name));
-                                        
-                                        $isComponentFailed = (trim($mark->grade) === 'F' || trim($partnerMark->grade) === 'F');
-                                        
-                                        if ($isComponentFailed) {
-                                            $gradeData = ['grade' => 'F'];
-                                        } else {
-                                            $gradeData = $getGradeData($combinedMax > 0 ? ($combinedObt / $combinedMax) * 100 : 0, false);
-                                        }
 
-                                        $finalGroupedMarks[] = [
-                                            'subject_model' => $mark->subject,
-                                            'name' => $displayName,
-                                            'max' => $combinedMax,
-                                            'obt' => $combinedObt,
-                                            'grade' => $gradeData['grade']
-                                        ];
-                                        
-                                        $processedFinalIds[] = $mark->subject_id;
-                                        $processedFinalIds[] = $partnerSubjectId;
-                                        
-                                    } else {
-                                        $singleMarks = $validAllMarks->where('subject_id', $mark->subject_id);
-                                        $subMax = $singleMarks->sum(function($m) {
-                                            $rules = $m->subject->getMarksForExam($m->exam_id);
-                                            return $rules['full_marks'] > 0 ? $rules['full_marks'] : 100;
-                                        });
-                                        $subObt = $singleMarks->sum('marks_obtained');
-                                        
-                                        $finalGroupedMarks[] = [
-                                            'subject_model' => $mark->subject,
-                                            'name' => $mark->subject->name,
-                                            'max' => $subMax,
-                                            'obt' => $subObt,
-                                            'grade' => trim($mark->grade)
-                                        ];
-                                        
-                                        $processedFinalIds[] = $mark->subject_id;
-                                    }
-                                }
+                                // [Keep your existing grouping logic here...]
 
                                 $cumulativeCorePercentages = [];
                                 $hasCumulativeCoreFail = false;
+                                $finalOptionalBonusPoints = 0.00;
 
                                 foreach($finalGroupedMarks as $row) {
                                     $subName = strtolower($row['subject_model']->name ?? '');
                                     $subType = strtolower($row['subject_model']->subject_type ?? $row['subject_model']->type ?? '');
+                                    $isOptional = (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional');
 
-                                    if (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional') {
-                                        continue;
-                                    }
+                                    $grandTotalMax += $row['max'];
 
-                                    if ($row['grade'] === 'F') {
-                                        $hasCumulativeCoreFail = true;
+                                    if ($isOptional) {
+                                        // 🌟 Add marks above 40 to Grand Total
+                                        if ($row['obt'] > 40.0) {
+                                            $optionalBonusMarksFinal = $row['obt'] - 40.0;
+                                        }
+
+                                        $optPerc = $row['max'] > 0 ? ($row['obt'] / $row['max']) * 100 : 0;
+                                        $optGradeInfo = $getGradeData($optPerc, false);
+                                        if ($optGradeInfo['point'] > 2.00) {
+                                            $finalOptionalBonusPoints = $optGradeInfo['point'] - 2.00;
+                                        }
+                                    } else {
+                                        $coreObtainedSum += $row['obt'];
+
+                                        if ($row['grade'] === 'F') {
+                                            $hasCumulativeCoreFail = true;
+                                        }
+                                        $cumulativeCorePercentages[] = $row['max'] > 0 ? ($row['obt'] / $row['max']) * 100 : 0;
                                     }
-                                    
-                                    $cumulativeCorePercentages[] = $row['max'] > 0 ? ($row['obt'] / $row['max']) * 100 : 0;
                                 }
 
+                                // 🌟 Grand Total Obtained = Core Total + Marks Above 40
+                                $grandTotalObtained = $coreObtainedSum + $optionalBonusMarksFinal;
+
                                 $finalCoreCount = count($cumulativeCorePercentages);
-                                $finalAvgPercentage = $finalCoreCount > 0 ? array_sum($cumulativeCorePercentages) / $finalCoreCount : 0;
-                                
-                                $finalGradeWithout4th = $hasCumulativeCoreFail ? 'F' : $getGradeData($finalAvgPercentage)['grade'];
-                                $finalGPAWithout4th   = $hasCumulativeCoreFail ? '0.00' : number_format($getGradeData($finalAvgPercentage)['point'], 2);
+                                if ($hasCumulativeCoreFail || $finalCoreCount === 0) {
+                                    $finalGradeWithout4th = 'F';
+                                    $finalGPAWithout4th = '0.00';
+                                } else {
+                                    $finalAvgPercentage = array_sum($cumulativeCorePercentages) / $finalCoreCount;
+                                    $baseCoreGpa = $getGradeData($finalAvgPercentage)['point'];
+                                    $calcFinalGpa = min(5.00, $baseCoreGpa + ($finalOptionalBonusPoints / $finalCoreCount));
+                                    
+                                    $finalGPAWithout4th = number_format($calcFinalGpa, 2);
+                                    if ($calcFinalGpa >= 5.00) $finalGradeWithout4th = 'A+';
+                                    elseif ($calcFinalGpa >= 4.00) $finalGradeWithout4th = 'A';
+                                    elseif ($calcFinalGpa >= 3.50) $finalGradeWithout4th = 'A-';
+                                    elseif ($calcFinalGpa >= 3.00) $finalGradeWithout4th = 'B';
+                                    elseif ($calcFinalGpa >= 2.00) $finalGradeWithout4th = 'C';
+                                    elseif ($calcFinalGpa >= 1.00) $finalGradeWithout4th = 'D';
+                                    else $finalGradeWithout4th = 'F';
+                                }
                             @endphp
                             
                             @foreach($finalGroupedMarks as $row)

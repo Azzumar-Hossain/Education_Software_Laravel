@@ -10,22 +10,7 @@
 
     @if(count($students) > 0)
         @php
-            if (!function_exists('getShortSubjectLabel')) {
-                function getShortSubjectLabel($fullName) {
-                    $cleanName = trim(preg_replace('/\(.*\)/u', '', $fullName));
-                    $words = explode(' ', $cleanName);
-                    if (empty($words) || !$words[0]) return 'SUB';
-                    
-                    $prefix = ucfirst(strtolower(substr($words[0], 0, 3)));
-                    foreach ($words as $word) {
-                        if (str_contains($word, '1st')) return $prefix . ' 1';
-                        if (str_contains($word, '2nd')) return $prefix . ' 2';
-                    }
-                    return $prefix;
-                }
-            }
-
-            // 1. FIX SCHOOL NAME FETCHING
+            // FETCH SCHOOL DETAILS
             $siteSetting = \Illuminate\Support\Facades\DB::table('site_settings')->first() 
                 ?? \App\Models\Setting::first();
 
@@ -43,86 +28,6 @@
             $sectionName = !empty($this->data['section_id']) 
                 ? \App\Models\Section::find($this->data['section_id'])?->name 
                 : null;
-
-            // 2. CALCULATE GLOBAL MERIT POSITIONS
-            $allStudentMetrics = collect();
-
-            foreach ($students as $enrollment) {
-                $student = $enrollment->user;
-                if (!$student) continue;
-
-                $studentReligion = strtolower(trim($student->religion ?? ''));
-                $grandTotalMarks = 0;
-                $failedAnySubject = false;
-                $totalGpaSum = 0;
-                $subjectCount = 0;
-
-                foreach ($subjects as $subject) {
-                    $subNameLower = strtolower($subject->name);
-
-                    $isReligionPaper = str_contains($subNameLower, 'islam') || str_contains($subNameLower, 'hindu') || str_contains($subNameLower, 'christian') || str_contains($subNameLower, 'buddhi');
-                    $religionMismatch = ($isReligionPaper && (
-                        (str_contains($subNameLower, 'islam') && $studentReligion !== 'islam') ||
-                        (str_contains($subNameLower, 'hindu') && !str_contains($studentReligion, 'hindu')) ||
-                        (str_contains($subNameLower, 'christian') && !str_contains($studentReligion, 'christian')) ||
-                        (str_contains($subNameLower, 'buddhi') && !str_contains($studentReligion, 'buddhi'))
-                    ));
-
-                    $isOptionalSubject = ($subject->subject_type === 'Optional' || $subject->type === 'Optional');
-                    $optionalMismatch = ($isOptionalSubject && (int)$enrollment->optional_subject_id !== (int)$subject->id);
-
-                    if (!$religionMismatch && !$optionalMismatch) {
-                        $mark = \App\Models\Mark::where('student_id', $enrollment->user_id)
-                            ->where('exam_id', $this->data['exam_id'])
-                            ->where('subject_id', $subject->id)
-                            ->first();
-
-                        if ($mark) {
-                            $grandTotalMarks += $mark->marks_obtained;
-                            $totalGpaSum += $mark->gpa;
-                            $subjectCount++;
-                            if ($mark->grade === 'F') {
-                                $failedAnySubject = true;
-                            }
-                        } else {
-                            $failedAnySubject = true;
-                        }
-                    }
-                }
-
-                $avgGpa = $subjectCount > 0 ? ($totalGpaSum / $subjectCount) : 0;
-
-                $allStudentMetrics->push([
-                    'enrollment_id' => $enrollment->id,
-                    'user_id'       => $enrollment->user_id,
-                    'failed'        => $failedAnySubject,
-                    'gpa'           => $failedAnySubject ? 0.00 : $avgGpa,
-                    'total_marks'   => $grandTotalMarks,
-                ]);
-            }
-
-            // Order by Passed first, then highest GPA, then highest Total Marks
-            $sortedMeritList = $allStudentMetrics->sort(function ($a, $b) {
-                if ($a['failed'] !== $b['failed']) {
-                    return $a['failed'] ? 1 : -1;
-                }
-                if ($a['gpa'] != $b['gpa']) {
-                    return $b['gpa'] <=> $a['gpa'];
-                }
-                return $b['total_marks'] <=> $a['total_marks'];
-            })->values();
-
-            // Build position lookup table
-            $positionLookup = [];
-            $rankCounter = 1;
-
-            foreach ($sortedMeritList as $item) {
-                if ($item['failed']) {
-                    $positionLookup[$item['enrollment_id']] = 'Fail';
-                } else {
-                    $positionLookup[$item['enrollment_id']] = $rankCounter++;
-                }
-            }
         @endphp
 
         <div class="p-8 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm overflow-x-auto print-container">
@@ -172,62 +77,81 @@
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach($students as $enrollment)
+                    @foreach($students as $loopIndex => $studentData)
                         @php
-                            $student = $enrollment->user;
-                            $studentReligion = strtolower(trim($student->religion ?? ''));
-                            $grandTotalMarks = 0;
-                            $failedAnySubject = false;
-                        @endphp
-                        <tr>
-                            <td class="font-mono font-bold text-center text-sm">{{ sprintf('%02d', $enrollment->roll_number) }}</td>
-                            <td class="text-left px-3 font-semibold text-gray-900 dark:text-white uppercase truncate">{{ $student->name }}</td>
-                            <td class="font-mono text-gray-500 text-center text-[10px]">{{ $student->student_id }}</td>
+                            // Extract Data provided purely by the Controller
+                            $enrollment = is_array($studentData) ? $studentData['enrollment'] : $studentData;
+                            $student    = $enrollment->user;
 
+                            $grandTotalMarks = is_array($studentData) ? $studentData['grand_total'] : 0;
+                            $calculatedGPA   = is_array($studentData) ? $studentData['gpa'] : '0.00';
+                            $calculatedGrade = is_array($studentData) ? $studentData['grade'] : 'F';
+                            $position        = is_array($studentData) ? $studentData['position'] : '--';
+                            $studentMarks    = is_array($studentData) ? $studentData['marks'] : collect();
+                        @endphp
+
+                        <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                            <!-- Roll Number -->
+                            <td class="text-center font-bold font-mono px-2 py-1.5 border border-gray-300 dark:border-gray-700">
+                                {{ sprintf('%02d', $enrollment->roll_number) }}
+                            </td>
+
+                            <!-- Student Name -->
+                            <td class="text-left font-bold text-gray-900 dark:text-white px-2 py-1.5 border border-gray-300 dark:border-gray-700">
+                                {{ $student->name }}
+                            </td>
+
+                            <!-- Student ID -->
+                            <td class="text-center font-mono text-gray-600 dark:text-gray-300 px-2 py-1.5 border border-gray-300 dark:border-gray-700">
+                                {{ $student->student_id }}
+                            </td>
+
+                            <!-- Subject Grade Grid -->
                             @foreach($subjects as $subject)
                                 @php
-                                    $subNameLower = strtolower($subject->name);
+                                    $mark = $studentMarks->get($subject->id);
                                     
-                                    $isReligionPaper = str_contains($subNameLower, 'islam') || str_contains($subNameLower, 'hindu') || str_contains($subNameLower, 'christian') || str_contains($subNameLower, 'buddhi');
-                                    $religionMismatch = ($isReligionPaper && (
-                                        (str_contains($subNameLower, 'islam') && $studentReligion !== 'islam') ||
-                                        (str_contains($subNameLower, 'hindu') && !str_contains($studentReligion, 'hindu')) ||
-                                        (str_contains($subNameLower, 'christian') && !str_contains($studentReligion, 'christian')) ||
-                                        (str_contains($subNameLower, 'buddhi') && !str_contains($studentReligion, 'buddhi'))
-                                    ));
-
-                                    $isOptionalSubject = ($subject->subject_type === 'Optional' || $subject->type === 'Optional');
-                                    $optionalMismatch = ($isOptionalSubject && (int)$enrollment->optional_subject_id !== (int)$subject->id);
-
-                                    $mark = (!$religionMismatch && !$optionalMismatch)
-                                        ? \App\Models\Mark::where('student_id', $enrollment->user_id)->where('exam_id', $this->data['exam_id'])->where('subject_id', $subject->id)->first()
-                                        : null;
-
-                                    if($mark) {
-                                        $grandTotalMarks += $mark->marks_obtained;
-                                        if($mark->grade === 'F') $failedAnySubject = true;
-                                    }
+                                    // Filter out Religion mismatches
+                                    $subName    = strtolower($subject->name ?? '');
+                                    $studentRel = strtolower(trim($student->religion ?? ''));
+                                    
+                                    $isReligionMismatch = false;
+                                    if (str_contains($subName, 'islam') && $studentRel !== 'islam') $isReligionMismatch = true;
+                                    if (str_contains($subName, 'hindu') && $studentRel !== 'hinduism' && $studentRel !== 'hindu') $isReligionMismatch = true;
+                                    if (str_contains($subName, 'christian') && $studentRel !== 'christianity' && $studentRel !== 'christian') $isReligionMismatch = true;
                                 @endphp
 
-                                @if($religionMismatch || $optionalMismatch)
-                                    <td class="bg-gray-50 text-gray-300 font-mono text-center">-</td>
-                                @else
-                                    <td class="font-mono font-bold text-center text-xs {{ $mark && $mark->grade === 'F' ? 'text-danger-600 font-black' : 'text-gray-700 dark:text-gray-300' }}">
-                                        {{ $mark ? $mark->grade : 'F' }}
-                                    </td>
-                                @endif
+                                <td class="text-center font-extrabold text-xs px-1 py-1.5 border border-gray-300 dark:border-gray-700">
+                                    @if($isReligionMismatch)
+                                        <span class="text-gray-400">-</span>
+                                    @elseif($mark)
+                                        <span class="{{ $mark->grade === 'F' ? 'text-red-600 font-black' : 'text-gray-800 dark:text-gray-200' }}">
+                                            {{ $mark->grade }}
+                                        </span>
+                                    @else
+                                        <span class="text-gray-400">-</span>
+                                    @endif
+                                </td>
                             @endforeach
 
-                            <td class="font-mono font-bold text-center bg-gray-50/50 text-gray-900 dark:text-white">{{ $grandTotalMarks }}</td>
-                            <td class="font-mono font-bold text-center bg-gray-50/50 {{ $failedAnySubject ? 'text-danger-600' : 'text-success-600' }}">
-                                {{ $failedAnySubject ? '0.00' : number_format(\App\Models\Mark::where('student_id', $enrollment->user_id)->where('exam_id', $this->data['exam_id'])->avg('gpa') ?? 0, 2) }}
-                            </td>
-                            <td class="font-mono font-bold text-center bg-gray-50/50 {{ $failedAnySubject ? 'text-danger-600 font-black' : 'text-success-600' }}">
-                                {{ $failedAnySubject ? 'F' : 'A' }}
+                            <!-- Total Marks -->
+                            <td class="text-center font-extrabold text-gray-900 dark:text-white px-2 py-1.5 border border-gray-300 dark:border-gray-700">
+                                {{ number_format($grandTotalMarks, 0) }}
                             </td>
 
-                            <td class="font-mono font-bold text-center bg-gray-50/50 {{ ($positionLookup[$enrollment->id] ?? '') === 'Fail' ? 'text-danger-600 font-black' : 'text-gray-900 dark:text-white' }}">
-                                {{ $positionLookup[$enrollment->id] ?? '-' }}
+                            <!-- GPA -->
+                            <td class="text-center font-bold text-blue-600 dark:text-blue-400 px-2 py-1.5 border border-gray-300 dark:border-gray-700">
+                                {{ $calculatedGPA }}
+                            </td>
+
+                            <!-- Final Grade -->
+                            <td class="text-center font-extrabold px-2 py-1.5 border border-gray-300 dark:border-gray-700 {{ $calculatedGrade === 'F' ? 'text-red-600' : 'text-green-600' }}">
+                                {{ $calculatedGrade }}
+                            </td>
+
+                            <!-- Position -->
+                            <td class="text-center font-black px-2 py-1.5 border border-gray-300 dark:border-gray-700 {{ $position === 'Fail' ? 'text-red-600' : 'text-blue-700 dark:text-blue-300' }}">
+                                {{ $position }}
                             </td>
                         </tr>
                     @endforeach
@@ -320,7 +244,7 @@
                 margin: 6mm 4mm; 
             }
 
-            /* 1. Hide ONLY the form, sidebar, and topbar */
+            /* Hide ONLY the form, sidebar, and topbar */
             form.no-print, 
             .fi-sidebar, 
             .fi-topbar, 
@@ -328,7 +252,7 @@
                 display: none !important;
             }
 
-            /* 2. Force all underlying Filament wrappers to pure white */
+            /* Force all underlying Filament wrappers to pure white */
             html, 
             body, 
             .fi-layout, 
@@ -345,7 +269,7 @@
                 max-width: 100% !important;
             }
 
-            /* 3. Strip dark mode borders/shadows from the actual content */
+            /* Strip dark mode borders/shadows from the actual content */
             .print-container {
                 background-color: #ffffff !important;
                 border: none !important;
@@ -371,10 +295,16 @@
                 border: 0.5px solid #000000 !important; 
             }
 
-            .notice-board-table td, 
-            .notice-board-table td * { 
+            .notice-board-table td { 
                 background-color: #ffffff !important;
                 border: 0.5px solid #000000 !important; 
+                color: #000000 !important; 
+            }
+
+            /* Remove borders from spans/divs inside the table cells */
+            .notice-board-table td * { 
+                background-color: transparent !important;
+                border: none !important; 
                 color: #000000 !important; 
             }
 
@@ -408,7 +338,6 @@
                 color-scheme: light !important;
             }
 
-            /* Belt-and-braces: nothing should paint gray behind the page */
             * {
                 box-shadow: none !important;
             }

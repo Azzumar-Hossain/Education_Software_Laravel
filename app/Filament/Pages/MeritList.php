@@ -170,7 +170,6 @@ class MeritList extends Page implements HasForms
 
                                     $user = auth()->user();
 
-                                    // If logged in as Class Teacher, restrict to assigned sections only
                                     if ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
                                         $assignedSectionIds = ClassTeacher::where('teacher_id', $user->id)
                                             ->pluck('section_id')
@@ -182,7 +181,6 @@ class MeritList extends Page implements HasForms
                                             ->pluck('name', 'id');
                                     }
 
-                                    // Admin / Super Admin view all sections
                                     return Section::whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $classId))
                                         ->pluck('name', 'id');
                                 })
@@ -192,9 +190,9 @@ class MeritList extends Page implements HasForms
                             Select::make('study_group')
                                 ->label('Select Group')
                                 ->options([
-                                    'Science'          => 'Science',
+                                    'Science'         => 'Science',
                                     'Arts/Humanities' => 'Arts / Humanities',
-                                    'Commerce'         => 'Commerce',
+                                    'Commerce'        => 'Commerce',
                                 ])
                                 ->visible(fn ($get) => $get('merit_scope') === 'group')
                                 ->required(),
@@ -222,9 +220,6 @@ class MeritList extends Page implements HasForms
         $enrollments = $query->get();
         $calculatedRankings = [];
 
-        $className = strtolower(SchoolClass::find($inputs['school_class_id'])?->name ?? '');
-        $has4thSubjectColumn = str_contains($className, '9') || str_contains($className, '10');
-
         foreach ($enrollments as $enrollment) {
             $marks = Mark::with('subject')
                 ->where('student_id', $enrollment->user_id)
@@ -237,18 +232,41 @@ class MeritList extends Page implements HasForms
                 continue;
             }
 
-            // 1. COMBINED SUBJECTS & SINGLE PAPER GROUPING WITH EXAM-SPECIFIC FULL MARKS
+            // 🌟 A. FILTER INCOMPATIBLE SUBJECTS (Safeguard) 🌟
+            $groupName = strtolower($enrollment->study_group ?? '');
+            
+            $filteredMarks = $marks->filter(function($mark) use ($groupName) {
+                if (!$mark->subject) return false;
+                
+                $subCode = (string) $mark->subject->code;
+                $subName = strtolower($mark->subject->name);
+                
+                if ($groupName === 'science') {
+                    if ($subCode === '127' || str_contains($subName, 'general science') || str_contains($subName, 'সাধারণ বিজ্ঞান')) {
+                        return false;
+                    }
+                }
+                
+                if (in_array($groupName, ['arts/humanities', 'arts', 'humanities', 'commerce'])) {
+                    if (in_array($subCode, ['136', '137', '138'])) { // Physics, Chem, Bio
+                        return false;
+                    }
+                }
+                return true;
+            })->values();
+
+            // 🌟 B. COMBINED SUBJECTS GROUPING 🌟
             $groupedMarks = [];
             $processedIds = [];
 
-            foreach ($marks as $mark) {
+            foreach ($filteredMarks as $mark) {
                 if (in_array($mark->id, $processedIds)) continue;
 
                 $partnerMark = null;
                 if ($mark->subject->linked_subject_id) {
-                    $partnerMark = $marks->firstWhere('subject_id', $mark->subject->linked_subject_id);
+                    $partnerMark = $filteredMarks->firstWhere('subject_id', $mark->subject->linked_subject_id);
                 } else {
-                    $partnerMark = $marks->where('subject.linked_subject_id', $mark->subject_id)->first();
+                    $partnerMark = $filteredMarks->where('subject.linked_subject_id', $mark->subject_id)->first();
                     if ($partnerMark) {
                         $temp = $mark; $mark = $partnerMark; $partnerMark = $temp;
                     }
@@ -288,49 +306,55 @@ class MeritList extends Page implements HasForms
                 }
             }
 
-            // 2. SEPARATE CORE AND OPTIONAL SUBJECTS FOR ACCURATE GPA
+            // 🌟 C. SEPARATE CORE AND OPTIONAL FOR 4TH SUBJECT RULES 🌟
             $coreGPAs = [];
             $hasCoreFail = false;
-            $totalMarksObtained = 0;
+            $coreTotalMarks = 0.0;
+
+            $optionalBonusMarks = 0.0;
+            $optionalBonusPoints = 0.00;
 
             foreach ($groupedMarks as $gMark) {
-                $totalMarksObtained += $gMark['combined_obt'];
                 $subName = strtolower($gMark['subject_model']->name ?? '');
                 $subType = strtolower($gMark['subject_model']->subject_type ?? $gMark['subject_model']->type ?? '');
+                $isOptional = (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional');
 
-                if (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional') {
-                    // Optional subject handling
+                $obt   = (float) $gMark['combined_obt'];
+                $gp    = (float) $gMark['gpa'];
+                $grade = $gMark['combined_grade'];
+
+                if ($isOptional) {
+                    // Rule 1: Marks Bonus above 40
+                    if ($obt > 40.0) {
+                        $optionalBonusMarks = $obt - 40.0;
+                    }
+                    // Rule 2: GPA Bonus above 2.00
+                    if ($gp > 2.00) {
+                        $optionalBonusPoints = $gp - 2.00;
+                    }
                 } else {
-                    if ($gMark['combined_grade'] === 'F') {
+                    $coreTotalMarks += $obt;
+                    $coreGPAs[] = $gp;
+                    
+                    if ($grade === 'F') {
                         $hasCoreFail = true;
                     }
-                    $coreGPAs[] = (float) $gMark['gpa'];
                 }
             }
 
+            // Grand Total (Core Sum + 4th Sub Bonus)
+            $grandTotalMarks = $coreTotalMarks + $optionalBonusMarks;
+
+            // Final GPA & Grade Calculation
             $coreCount = count($coreGPAs);
-            $gpaWithout4th = ($hasCoreFail || $coreCount === 0) ? 0.00 : array_sum($coreGPAs) / $coreCount;
-
-            $finalGpaVal = 0.00;
-            if (!$hasCoreFail && count($groupedMarks) > 0) {
-                $rawGpaSum = 0;
-                foreach ($groupedMarks as $gMark) {
-                    $subName = strtolower($gMark['subject_model']->name ?? '');
-                    $subType = strtolower($gMark['subject_model']->subject_type ?? $gMark['subject_model']->type ?? '');
-
-                    if (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional') {
-                        $points = (float) $gMark['gpa'];
-                        if ($points > 2.00) $rawGpaSum += ($points - 2.00);
-                    } else {
-                        $rawGpaSum += (float) $gMark['gpa'];
-                    }
-                }
-                $finalGpaVal = min(5.00, $rawGpaSum / ($coreCount > 0 ? $coreCount : 1));
+            if ($hasCoreFail || $coreCount === 0) {
+                $finalGpaVal = 0.00;
+                $finalGrade = 'F';
+            } else {
+                $rawGpaSum = array_sum($coreGPAs) + $optionalBonusPoints;
+                $finalGpaVal = min(5.00, $rawGpaSum / $coreCount);
+                $finalGrade = $this->calculateGradeFromGpa($finalGpaVal, false);
             }
-
-            $calculatedGpa = $has4thSubjectColumn ? $finalGpaVal : $gpaWithout4th;
-            $finalGpaFormatted = $hasCoreFail ? '0.00' : number_format($calculatedGpa, 2);
-            $finalGrade = $this->calculateGradeFromGpa($calculatedGpa, $hasCoreFail);
 
             $calculatedRankings[] = [
                 'student_id'   => $enrollment->user->student_id ?? 'N/A',
@@ -338,14 +362,14 @@ class MeritList extends Page implements HasForms
                 'roll_number'  => $enrollment->roll_number,
                 'section_name' => $enrollment->section->name ?? 'N/A',
                 'group_name'   => $enrollment->study_group ?? 'General',
-                'total_marks'  => $totalMarksObtained,
-                'final_gpa'    => $finalGpaFormatted,
+                'total_marks'  => $grandTotalMarks,
+                'final_gpa'    => number_format($finalGpaVal, 2),
                 'final_grade'  => $finalGrade,
                 'is_failed'    => $hasCoreFail,
             ];
         }
 
-        // 3. MERIT RANKING SORT
+        // 🌟 D. MERIT RANKING SORT 🌟
         usort($calculatedRankings, function ($a, $b) {
             if ($a['is_failed'] !== $b['is_failed']) {
                 return $a['is_failed'] <=> $b['is_failed'];
@@ -353,7 +377,7 @@ class MeritList extends Page implements HasForms
             if ((float)$b['final_gpa'] != (float)$a['final_gpa']) {
                 return (float)$b['final_gpa'] <=> (float)$a['final_gpa'];
             }
-            return $b['total_marks'] <=> $a['total_marks'];
+            return (float)$b['total_marks'] <=> (float)$a['total_marks'];
         });
 
         $this->meritRecords = $calculatedRankings;
@@ -367,7 +391,6 @@ class MeritList extends Page implements HasForms
         if ($perc >= 50) return 3.00;
         if ($perc >= 40) return 2.00;
         if ($perc >= 33) return 1.00;
-        if ($perc >= 0)  return 0.00;
         return 0.00;
     }
 

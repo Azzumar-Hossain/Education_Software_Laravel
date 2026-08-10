@@ -101,7 +101,12 @@
                                 <td class="py-2 px-2 text-center border-r border-gray-200 dark:border-gray-800">{{ $record['roll_number'] }}</td>
                                 <td class="py-2 px-2 text-center border-r border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400">{{ $record['section_name'] }}</td>
                                 <td class="py-2 px-2 text-center font-bold border-r border-gray-200 dark:border-gray-800">{{ $record['group_name'] }}</td>
-                                <td class="py-2 px-2 text-right font-extrabold border-r border-gray-200 dark:border-gray-800">{{ number_format($record['total_marks'], 2) }}</td>
+                                
+                                <!-- 🌟 Match formatting (no decimals or 1 decimal) to the Notice Board -->
+                                <td class="py-2 px-2 text-right font-extrabold border-r border-gray-200 dark:border-gray-800">
+                                    {{ number_format($record['total_marks'], 1) }}
+                                </td>
+                                
                                 <td class="py-2 px-2 text-center font-extrabold text-success-600 dark:text-success-400 border-r border-gray-200 dark:border-gray-800">{{ $record['final_gpa'] }}</td>
                                 <td class="py-2 px-2 text-center font-extrabold text-success-600 dark:text-success-400 border-r border-gray-200 dark:border-gray-800">{{ $record['final_grade'] }}</td>
                                 <td class="py-2 px-2 text-center font-bold font-sans text-success-600 dark:text-success-400">☑ Passed</td>

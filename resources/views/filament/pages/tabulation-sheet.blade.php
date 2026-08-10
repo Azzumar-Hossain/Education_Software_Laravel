@@ -139,21 +139,30 @@
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach($students as $loopIndex => $enrollment)
+                    @foreach($students as $loopIndex => $studentData)
                         @php
+                            // Extract enrollment object & metadata
+                            $enrollment = is_array($studentData) ? $studentData['enrollment'] : $studentData;
                             $student = $enrollment->user;
                             $studentReligion = strtolower(trim($student->religion ?? ''));
                             
-                            $studentGrandTotal = 0;
-                            $hasFailed = false;
-                            $subjectCount = 0;
-                            $gpaSum = 0;
+                            // 🌟 READ THE EXACT GRAND TOTAL PRE-CALCULATED BY TABULATIONSHEET.PHP
+                            $studentGrandTotal = is_array($studentData) ? (float) $studentData['grand_total'] : 0.0;
+                            $calculatedGPA     = is_array($studentData) ? $studentData['gpa'] : '0.00';
+                            $calculatedGrade   = is_array($studentData) ? $studentData['grade'] : 'F';
+                            $hasFailed         = is_array($studentData) ? $studentData['has_core_fail'] : false;
 
-                            $rankIndex = $peerTotals->search(fn($item) => $item->student_id == $student->id);
-                            $position = ($rankIndex !== false) ? ($rankIndex + 1) : '--';
+                            // Template expected variables
+                            $gpaSum       = (float) $calculatedGPA;
+                            $subjectCount = count($subjects ?? []);
 
-                            $isPageBreak = (($loopIndex + 1) % $rowsPerPage === 0) && !$loop->last;
+                            // Rank & Page break calculations
+                            $rankIndex   = isset($peerTotals) ? $peerTotals->search(fn($item) => $item->student_id == $student->id) : false;
+                            $position    = ($rankIndex !== false) ? ($rankIndex + 1) : '--';
+                            $rowsPerPage = (int) ($data['rows_per_page'] ?? 7);
+                            $isPageBreak = ($loopIndex > 0) && ($loopIndex % $rowsPerPage === 0);
                         @endphp
+                        
                         <tr class="{{ $isPageBreak ? 'print-page-break' : '' }} hover:bg-gray-50 dark:hover:bg-gray-800/50">
                             <td class="font-mono font-bold text-center text-gray-900 dark:text-gray-200 text-xs">
                                 {{ sprintf('%02d', $loopIndex + 1) }}
@@ -188,7 +197,6 @@
                                         : null;
 
                                     if ($mark && !$religionMismatch && !$optionalMismatch) {
-                                        $studentGrandTotal += $mark->marks_obtained;
                                         $gpaSum += (float)$mark->gpa;
                                         $subjectCount++;
                                         if ($mark->grade === 'F') {
@@ -224,14 +232,19 @@
                                 $finalGrade = $hasFailed ? 'F' : ($finalGPA == '5.00' ? 'A+' : ($finalGPA >= '4.00' ? 'A' : ($finalGPA >= '3.50' ? 'A-' : ($finalGPA >= '3.00' ? 'B' : ($finalGPA >= '2.00' ? 'C' : 'D')))));
                             @endphp
 
-                            <td class="font-mono font-extrabold text-center bg-gray-50/50 dark:bg-gray-800/50 text-gray-900 dark:text-white text-sm">
-                                {{ $studentGrandTotal }}
+                            <!-- Total Marks Cell -->
+                            <td class="font-bold border border-gray-300 px-2 py-1 text-center">
+                                {{ number_format($studentGrandTotal, 1) }}
                             </td>
-                            <td class="font-mono font-extrabold text-center bg-gray-50/50 dark:bg-gray-800/50 text-sm {{ $hasFailed ? 'text-danger-600 dark:text-danger-400' : 'text-success-600 dark:text-success-400' }}">
-                                {{ $finalGPA }}
+
+                            <!-- GPA Cell -->
+                            <td class="font-bold border border-gray-300 px-2 py-1 text-center text-blue-600">
+                                {{ $calculatedGPA }}
                             </td>
-                            <td class="font-mono font-extrabold text-center bg-gray-50/50 dark:bg-gray-800/50 text-sm {{ $hasFailed ? 'text-danger-600 dark:text-danger-400 font-black' : 'text-success-600 dark:text-success-400' }}">
-                                {{ $finalGrade }}
+
+                            <!-- Grade Cell -->
+                            <td class="font-bold border border-gray-300 px-2 py-1 text-center {{ $calculatedGrade === 'F' ? 'text-red-600' : 'text-green-600' }}">
+                                {{ $calculatedGrade }}
                             </td>
                             <td class="font-mono font-extrabold text-center bg-gray-50/50 dark:bg-gray-800/50 text-blue-600 dark:text-blue-400 text-sm">
                                 {{ $position }}

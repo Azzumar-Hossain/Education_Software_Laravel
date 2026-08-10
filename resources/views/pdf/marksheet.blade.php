@@ -1,13 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
 <title>Mid Term Mark Sheet - {{ $enrollment->user->name }}</title>
 @php
     $settings = \App\Models\SiteSetting::first() ?? \App\Models\Setting::first();
 
-    // 🌟 DYNAMIC LOGO FETCH 🌟
     $logoUrl = ($settings && !empty($settings->logo))
         ? \Illuminate\Support\Facades\Storage::url($settings->logo)
         : null;
@@ -20,61 +18,23 @@
         ? $settings->address_en
         : 'Chapai Nawabganj, Bangladesh';
 
-        // 🌟 DYNAMIC STUDENT PHOTO FETCH 🌟
-            $studentPhoto = null;
-            $rawPhotoPath = $enrollment->user->avatar ?? $enrollment->user->photo ?? null;
+    $studentPhoto = null;
+    $rawPhotoPath = $enrollment->user->avatar ?? $enrollment->user->photo ?? null;
 
-            if ($rawPhotoPath) {
-                $fullPath = storage_path('app/public/' . $rawPhotoPath);
-                if (file_exists($fullPath)) {
-                    $studentPhoto = $fullPath;
-                } else {
-                    $studentPhoto = \Illuminate\Support\Facades\Storage::url($rawPhotoPath);
-                }
-            }
+    if ($rawPhotoPath) {
+        $fullPath = storage_path('app/public/' . $rawPhotoPath);
+        if (file_exists($fullPath)) {
+            $studentPhoto = $fullPath;
+        } else {
+            $studentPhoto = \Illuminate\Support\Facades\Storage::url($rawPhotoPath);
+        }
+    }
 
-    // Logic to determine if class is junior or senior
     $className = strtolower($enrollment->schoolClass->name ?? '');
     $has4thSubjectColumn = str_contains($className, '9') || str_contains($className, '10');
 
-    // 🌟 1. DYNAMIC GRADE AND FAIL CHECKER FUNCTIONS 🌟
     $getGradeData = function($percentage, $isComponentFailed = false) {
         return \App\Models\GradeScale::getGradeForMark($percentage, $isComponentFailed);
-    };
-
-    // 🌟 FULLY CORRECTED COMPONENT FAIL CHECKER (SUPPORTS EXAM OVERRIDES & DB GRADES) 🌟
-    $checkComponentFail = function($markObj, $examId) {
-        if (!$markObj || !$markObj->subject) return false;
-        
-        // 1. Trust the database: If Marks Entry already saved an 'F', enforce it.
-        if (trim($markObj->grade) === 'F') return true;
-
-        // 2. Fetch specific exam rules (supports Custom Exam Rules overrides)
-        $subject = $markObj->subject;
-        $rules = $subject->getMarksForExam($examId); 
-        
-        $overallPass = $rules['overall_pass_rule'] ?? $subject->overall_pass_rule ?? false;
-        if ($overallPass) return false;
-        
-        $wPass = $rules['written_pass'] ?? $subject->written_pass ?? 0;
-        $mPass = $rules['mcq_pass'] ?? $subject->mcq_pass ?? 0;
-        $pPass = $rules['practical_pass'] ?? $subject->practical_pass ?? 0;
-        
-        $wFail = ($wPass > 0) && ((float)$markObj->written_mark < (float)$wPass);
-        $mFail = ($mPass > 0) && ((float)$markObj->mcq_mark < (float)$mPass);
-        $pFail = ($pPass > 0) && ((float)$markObj->practical_mark < (float)$pPass);
-        
-        return $wFail || $mFail || $pFail;
-    };
-
-    $getHighest = function($subjectId, $column) use ($marks, $exam) {
-        if ($marks->isEmpty()) return '--';
-        $sampleMark = $marks->first();
-        $highest = $sampleMark->newQuery()
-            ->where('exam_id', $exam->id)
-            ->where('subject_id', $subjectId)
-            ->max($column);
-        return ($highest !== null && $highest > 0) ? number_format($highest, 1) : '--';
     };
 
     $formatSubjectWithCode = function($subjectModel) {
@@ -124,7 +84,18 @@
         }
     }
 
-    // --- 3. COMBINED SUBJECTS LOGIC ---
+    // --- 3. COMBINED SUBJECTS LOGIC & SORTING ---
+    $boardSubjectOrder = [
+        '101', '102', '107', '108', '109', '127', '150', '111', '112', '154', 
+        '153', '140', '110', '126', '136', '137', '138', '134'
+    ];
+
+    $marks = $marks->sortBy(function($m) use ($boardSubjectOrder) {
+        $code = (string) ($m->subject->code ?? '');
+        $idx = array_search($code, $boardSubjectOrder);
+        return $idx !== false ? $idx : 999;
+    });
+
     $groupedMarks = [];
     $processedIds = [];
 
@@ -152,9 +123,18 @@
             $combinedObt = $mark->marks_obtained + $partnerMark->marks_obtained;
             $combinedPerc = $combinedMax > 0 ? ($combinedObt / $combinedMax) * 100 : 0;
             
-            // 🌟 Trust the DB: If either paper failed components, the combined fails
-            $isComponentFailed = (trim($mark->grade) === 'F' || trim($partnerMark->grade) === 'F');
-            
+            $pass1 = $r1['written_pass'] ?? $mark->subject->written_pass ?? 33;
+            $pass2 = $r2['written_pass'] ?? $partnerMark->subject->written_pass ?? 33;
+            $combinedRequiredPass = $pass1 + $pass2;
+
+            $mcq1Pass = $r1['mcq_pass'] ?? $mark->subject->mcq_pass ?? 0;
+            $mcq2Pass = $r2['mcq_pass'] ?? $partnerMark->subject->mcq_pass ?? 0;
+            $combinedMcqObt = ($mark->mcq_mark ?? 0) + ($partnerMark->mcq_mark ?? 0);
+            $combinedMcqPass = $mcq1Pass + $mcq2Pass;
+
+            $mcqFail = ($combinedMcqPass > 0) && ($combinedMcqObt < $combinedMcqPass);
+            $isComponentFailed = ($combinedObt < $combinedRequiredPass) || $mcqFail;
+
             if ($isComponentFailed) {
                 $cGrade = 'F';
                 $cGpa = '0.00';
@@ -179,7 +159,6 @@
             $processedIds[] = $mark->id;
             $processedIds[] = $partnerMark->id;
         } else {
-            // 🌟 ULTIMATE FIX: 100% BLIND TRUST IN THE DATABASE FOR SINGLE SUBJECTS 🌟
             $groupedMarks[] = [
                 'is_combined' => false,
                 'subject_model' => $mark->subject,
@@ -192,30 +171,38 @@
         }
     }
 
-    $totalMax = $marks->sum(function($m) use ($exam) {
-        $r = $m->subject->getMarksForExam($exam->id);
-        return $r['full_marks'] > 0 ? $r['full_marks'] : 100;
-    });
-    $totalObtained = $marks->sum('marks_obtained');
-    
-    // Dynamic failure calculation based on strictly evaluated grouped marks
-    $failedSubjectsCount = count(array_filter($groupedMarks, fn($g) => $g['combined_grade'] === 'F'));
-    $hasFailed = $failedSubjectsCount > 0;
-
-    // --- 4. SEPARATE CORE AND 4TH/OPTIONAL SUBJECTS ---
+    // --- 4. SEPARATE CORE AND 4TH/OPTIONAL SUBJECTS WITH RULES ---
     $coreGroupedMarks = [];
     $optionalGroupedMarks = [];
     $coreGPAs = [];
     $hasCoreFail = false;
+    
+    $coreTotalObtained = 0.0;
+    $optionalBonusMarks = 0.0;
+    $optionalBonusPoints = 0.00;
 
     foreach ($groupedMarks as $gMark) {
         $subName = strtolower($gMark['subject_model']->name ?? '');
         $subType = strtolower($gMark['subject_model']->subject_type ?? $gMark['subject_model']->type ?? '');
+        $isOptional = (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional');
 
-        if (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional') {
+        $markVal = (float) ($gMark['is_combined'] ? $gMark['combined_obt'] : $gMark['paper1']->marks_obtained);
+
+        if ($isOptional) {
             $optionalGroupedMarks[] = $gMark;
+
+            $points = (float) $gMark['gpa'];
+            if ($points > 2.00) {
+                $optionalBonusPoints = $points - 2.00;
+            }
+
+            if ($markVal > 40.0) {
+                $optionalBonusMarks = $markVal - 40.0;
+            }
         } else {
             $coreGroupedMarks[] = $gMark;
+            $coreTotalObtained += $markVal;
+
             if ($gMark['combined_grade'] === 'F') {
                 $hasCoreFail = true;
             }
@@ -227,22 +214,16 @@
     $gpaWithout4th = ($hasCoreFail || $coreCount === 0) ? '0.00' : number_format(array_sum($coreGPAs) / $coreCount, 2);
 
     $gpaWith4th = '0.00';
-    if (!$hasFailed && count($groupedMarks) > 0) {
-        $rawGpaSum = 0;
-        foreach ($groupedMarks as $gMark) {
-            $subName = strtolower($gMark['subject_model']->name ?? '');
-            $subType = strtolower($gMark['subject_model']->subject_type ?? $gMark['subject_model']->type ?? '');
-            if (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional') {
-                $points = (float) $gMark['gpa'];
-                if ($points > 2.00) $rawGpaSum += ($points - 2.00);
-            } else {
-                $rawGpaSum += (float) $gMark['gpa'];
-            }
-        }
+    if (!$hasCoreFail && $coreCount > 0) {
+        $rawGpaSum = array_sum($coreGPAs) + $optionalBonusPoints;
         $gpaWith4th = number_format(min(5.00, $rawGpaSum / $coreCount), 2);
     }
 
-    // --- 5. DYNAMIC MERIT POSITION RANKING CALCULATOR ENGINE ---
+    $hasFailed = $hasCoreFail; 
+    $failedSubjectsCount = count(array_filter($coreGroupedMarks, fn($g) => $g['combined_grade'] === 'F'));
+    $totalObtained = $coreTotalObtained + $optionalBonusMarks;
+
+    // --- 5. MERIT POSITION ---
     $meritPosition = '--';
     $peerTotals = \App\Models\Mark::where('academic_year_id', $enrollment->academic_year_id)
         ->where('school_class_id', $enrollment->school_class_id)
@@ -257,7 +238,7 @@
         $meritPosition = $rankIndex + 1;
     }
 
-    // --- 🌟 6. GENERATE QR CODE PAYLOAD 🌟 ---
+    // --- 6. QR CODE ---
     $finalGPA = $has4thSubjectColumn ? $gpaWith4th : $gpaWithout4th;
 
     $getGradeFromGPA = function($gpaVal, $hasFailed) {
@@ -285,27 +266,26 @@
     $qrCodeUrl = "https://api.qrserver.com/v1/create-qr-code/?size=110x110&data=" . urlencode($qrPayload);
 @endphp
 
-<html>
 <head>
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
-    <title>Mid Term Mark Sheet - {{ $enrollment->user->name }}</title>
     <style>
         body {
             font-family: 'SolaimanLipi', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: #fff;
             color: #000;
-            font-size: 12px;
-            padding: 5px;
+            font-size: 11px;
+            margin: 0;
+            padding: 0;
         }
         .mark-sheet {
             width: 100%;
             background: #fff;
-            border: 4px solid #e6c84b;
-            padding: 12px;
+            border: 3px solid #e6c84b;
+            padding: 8px;
+            box-sizing: border-box;
         }
         .inner-border {
-            border: 2px solid #e6c84b;
-            padding: 16px;
+            border: 1.5px solid #e6c84b;
+            padding: 10px;
         }
         .layout-table {
             width: 100%;
@@ -317,30 +297,21 @@
             padding: 0;
             vertical-align: top;
         }
-        .student-photo {
-            width: 80px;
-            height: 100px;
-            border: 1px solid #ccc;
-            text-align: center;
-            font-size: 10px;
-            color: #333;
-            padding-top: 25px;
-        }
         .school-info {
             text-align: center;
-            padding: 0 10px;
+            padding: 0 6px;
         }
         .school-logo {
-            width: 50px;
-            height: 50px;
+            width: 48px;
+            height: 48px;
             object-fit: contain;
-            margin: 0 auto 4px auto;
+            margin: 0 auto 3px auto;
             display: block;
         }
         .school-logo-fallback {
             width: 40px;
             height: 40px;
-            margin: 0 auto 4px auto;
+            margin: 0 auto 3px auto;
             background: #4CAF50;
             border-radius: 50%;
             text-align: center;
@@ -348,117 +319,120 @@
             color: #fff;
             font-weight: bold;
             font-size: 20px;
-            border: 2px solid #e6c84b;
+            border: 1.5px solid #e6c84b;
         }
         .school-name {
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 700;
             color: #333;
             letter-spacing: 0.5px;
+            line-height: 1.15;
         }
         .school-address {
-            font-size: 11px;
+            font-size: 10.5px;
             color: #555;
             margin-top: 2px;
         }
         .sheet-title {
-            font-size: 13px;
+            font-size: 12.5px;
             font-weight: 700;
             color: #333;
-            margin-top: 6px;
+            margin-top: 4px;
             text-transform: uppercase;
         }
         .academic-year {
-            font-size: 11px;
+            font-size: 10.5px;
             color: #555;
             margin-top: 2px;
         }
         .grade-table {
             border-collapse: collapse;
-            font-size: 10px;
-            width: 140px;
+            font-size: 9px;
+            width: 130px;
             float: right;
         }
         .grade-table th {
             background: #333;
             color: #fff;
-            padding: 3px 6px;
+            padding: 2px 4px;
             text-align: center;
             font-weight: 600;
             border: 1px solid #333;
         }
         .grade-table td {
             border: 1px solid #333;
-            padding: 2px 6px;
+            padding: 1.5px 4px;
             text-align: center;
-            font-size: 9px;
-        }
-        .grade-table tr:nth-child(even) td {
-            background: #f9f9f9;
+            font-size: 8.5px;
         }
         .info-col-table {
             width: 100%;
             border-collapse: collapse;
         }
         .info-col-table td {
-            padding: 3.5px 2px;
+            padding: 2.5px 1px;
             font-size: 10px;
             vertical-align: baseline;
         }
         .info-label {
-            width: 110px;
+            width: 95px;
             font-weight: 600;
             color: #333;
         }
         .info-value {
             border-bottom: 1px solid #333;
         }
+        
         .table-transcript-grid {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 15px;
-            margin-bottom: 15px;
+            margin-top: 8px;
+            margin-bottom: 8px;
         }
         .table-transcript-grid th, .table-transcript-grid td {
             border: 1px solid #000;
-            padding: 4px 1px;
+            padding: 3px 2px;
             text-align: center;
-            font-size: 10px;
+            font-size: 9px;
             vertical-align: middle;
+            line-height: 1.15;
         }
         .table-transcript-grid th {
             background: #f2f2f2;
             font-weight: bold;
-            font-size: 9.5px;
+            font-size: 8.5px;
         }
         .table-transcript-grid .subject-name {
             text-align: left;
             padding-left: 5px;
             font-weight: 600;
-            font-size: 10.5px;
+            font-size: 9px;
+            white-space: nowrap;
         }
         .table-transcript-grid .section-divider-row td {
             background: #f5f5f5;
             font-weight: bold;
             text-align: left;
-            padding-left: 8px;
-            font-size: 11px;
+            padding-left: 6px;
+            font-size: 9.5px;
             color: #333;
             border-top: 1px solid #000;
             border-bottom: 1px solid #000;
+            padding-top: 2.5px;
+            padding-bottom: 2.5px;
         }
 
         .table-transcript-grid .grand-total-row td {
             background: #e2e8f0 !important;
             font-weight: 800 !important;
-            font-size: 11px !important;
-            border-top: 2.5px solid #000 !important;
-            border-bottom: 2.5px solid #000 !important;
-            padding: 6px 2px !important;
+            font-size: 10px !important;
+            border-top: 2px solid #000 !important;
+            border-bottom: 2px solid #000 !important;
+            padding: 4px 2px !important;
         }
 
         .right-side-merged-cell {
-            font-size: 13px;
+            font-size: 11.5px;
             font-weight: bold;
             vertical-align: middle;
             background: #fff;
@@ -470,30 +444,57 @@
         }
         .summary-block-matrix td {
             border: 1px solid #333 !important;
-            padding: 5px 10px;
-            font-size: 11.5px;
+            padding: 3.5px 6px;
+            font-size: 9.5px;
         }
         .summary-lbl {
             background: #f5f5f5;
             font-weight: bold;
-            width: 145px;
+            width: 120px;
         }
+
+        /* 🌟 CO-CURRICULAR & MORAL BEHAVIOR TABLES STYLING 🌟 */
+        .eval-matrix-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+        .eval-matrix-table th {
+            background: #f5f5f5;
+            border: 1px solid #333;
+            padding: 3px;
+            font-size: 9.5px;
+            font-weight: bold;
+            text-align: center;
+        }
+        .eval-matrix-table td {
+            border: 1px solid #333;
+            padding: 2.5px 5px;
+            font-size: 9px;
+        }
+        .eval-checkbox {
+            width: 22px;
+            text-align: center;
+            font-weight: bold;
+        }
+
         .comments-box {
             border: 1px solid #333;
-            padding: 8px;
-            font-size: 12px;
-            min-height: 45px;
-            margin-top: 15px;
+            padding: 6px;
+            font-size: 9.5px;
+            min-height: 48px;
+            margin-top: 8px;
             width: 100%;
+            box-sizing: border-box;
         }
         .signatures-table {
             width: 100%;
-            margin-top: 55px;
+            margin-top: 45px;
             border-collapse: collapse;
         }
         .signatures-table td {
             text-align: center;
-            font-size: 11px;
+            font-size: 9.5px;
             color: #333;
             font-weight: 600;
             width: 33.33%;
@@ -501,16 +502,16 @@
         }
         .signature-line {
             border-top: 1px solid #333;
-            width: 170px;
+            width: 150px;
             margin: 0 auto;
-            padding-top: 4px;
+            padding-top: 3px;
         }
         .footer-table {
             width: 100%;
-            margin-top: 20px;
+            margin-top: 12px;
             border-top: 1px solid #ddd;
-            padding-top: 4px;
-            font-size: 10px;
+            padding-top: 3px;
+            font-size: 8.5px;
             color: #666;
         }
         .highlight-green { color: #2e7d32; font-weight: 700; }
@@ -518,27 +519,18 @@
         .highlight-teal { color: #00897b; font-weight: 700; }
         .grade-f { color: #dc2626; font-weight: bold; }
 
-        /* 🌟 QR CODE BOX STYLING 🌟 */
         .qr-code-wrapper {
-            border: 1.5px solid #333;
-            padding: 4px;
+            border: 1px solid #333;
+            padding: 2px;
             background: #fff;
             display: inline-block;
             text-align: center;
         }
         .qr-code-img {
-            width: 95px;
-            height: 95px;
+            width: 78px;
+            height: 78px;
             display: block;
             margin: 0 auto;
-        }
-        .qr-caption {
-            font-size: 8px;
-            font-weight: bold;
-            color: #333;
-            margin-top: 3px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
         }
     </style>
 </head>
@@ -547,14 +539,13 @@
 <div class="mark-sheet">
   <div class="inner-border">
 
-    <table class="layout-table" style="margin-bottom: 10px;">
+    <table class="layout-table" style="margin-bottom: 6px;">
       <tr>
-      <!-- ✅ AFTER: Dynamic Student Photo with Fallback -->
       <td style="width: 70px;">
           @if(!empty($studentPhoto))
-              <img src="{{ $studentPhoto }}" alt="Student Photo" style="width: 65px; height: 75px; object-fit: cover; border: 1px solid #333; display: block;">
+              <img src="{{ $studentPhoto }}" alt="Student Photo" style="width: 60px; height: 72px; object-fit: cover; border: 1px solid #333; display: block;">
           @else
-              <div class="photo-box">Paste<br>Photo<br>Here</div>
+              <div style="width:60px; height:72px; border:1px solid #ccc; text-align:center; font-size:8px; padding-top:18px;">Paste<br>Photo<br>Here</div>
           @endif
       </td>
         <td class="school-info">
@@ -569,7 +560,7 @@
           <div class="sheet-title">{{ $exam->name ?? 'Mid Term' }} Mark Sheet</div>
           <div class="academic-year">Academic Year: {{ $enrollment->academicYear->name }}</div>
         </td>
-        <td style="width: 145px;">
+        <td style="width: 130px;">
           <table class="grade-table">
             <thead>
               <tr><th>Range</th><th>Grade</th><th>GPA</th></tr>
@@ -588,7 +579,7 @@
       </tr>
     </table>
 
-    <table class="layout-table" style="margin-top: 15px; margin-bottom: 10px;">
+    <table class="layout-table" style="margin-top: 6px; margin-bottom: 6px;">
       <tr>
         <td style="width: 41%;">
           <table class="info-col-table">
@@ -611,7 +602,6 @@
             <tr><td class="info-label">Exam Year:</td><td class="info-value">{{ $enrollment->academicYear->name }}</td></tr>
           </table>
         </td>
-        <!-- 🌟 DYNAMIC QR CODE CONTAINER (RED HIGHLIGHTED SPOT) 🌟 -->
         <td style="width: 19%; text-align: right; vertical-align: middle;">
           <div class="qr-code-wrapper">
             <img src="{{ $qrCodeUrl }}" alt="Verification QR Code" class="qr-code-img">
@@ -727,8 +717,9 @@
         @endforeach
 
         @if(count($optionalGroupedMarks) > 0)
+          @php $colSpanCount = $has4thSubjectColumn ? 13 : 12; @endphp
           <tr class="section-divider-row">
-              <td colspan="8">Optional / 4th Subject</td>
+              <td colspan="{{ $colSpanCount }}">Optional / 4th Subject</td>
           </tr>
           @foreach($optionalGroupedMarks as $group)
             @php
@@ -752,17 +743,17 @@
         @endif
 
         <tr class="grand-total-row">
-          <td class="subject-name" style="text-align: left; padding-left: 8px;">Grand Total / Grade</td>
+          <td class="subject-name" style="text-align: left; padding-left: 5px;">Grand Total / Grade</td>
           <td colspan="6"></td>
-          <td style="font-weight: 900; font-size: 11px;">{{ number_format($totalObtained, 1) }}</td>
+          <td style="font-weight: 900; font-size: 10px;">{{ number_format($totalObtained, 1) }}</td>
           <td colspan="2"></td>
           <td>--</td>
-          <td class="{{ $finalGrade === 'F' ? 'grade-f' : 'highlight-green' }}" style="font-size: 12px; font-weight: 900;">{{ $finalGrade }}</td>
+          <td class="{{ $finalGrade === 'F' ? 'grade-f' : 'highlight-green' }}" style="font-size: 11px; font-weight: 900;">{{ $finalGrade }}</td>
         </tr>
       </tbody>
     </table>
 
-    <table class="layout-table" style="margin-top: 15px; margin-bottom: 10px;">
+    <table class="layout-table" style="margin-top: 6px; margin-bottom: 6px;">
       <tr>
         <td style="width: 49%;">
           <table class="summary-block-matrix">
@@ -777,6 +768,39 @@
             <tr><td class="summary-lbl">Failed Subject(s)</td><td style="font-weight: bold; color: {{ $hasFailed ? 'red' : 'green' }}">{{ $failedSubjectsCount }}</td></tr>
             <tr><td class="summary-lbl">Working Days</td><td></td></tr>
             <tr><td class="summary-lbl">Present Days</td><td></td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+
+    <!-- 🌟 MORAL & BEHAVIOR AND CO-CURRICULAR ACTIVITIES TABLES 🌟 -->
+    <table class="layout-table" style="margin-top: 6px; margin-bottom: 6px;">
+      <tr>
+        <td style="width: 49%;">
+          <table class="eval-matrix-table">
+            <thead>
+              <tr><th colspan="2">Moral & Behavior</th></tr>
+            </thead>
+            <tbody>
+              <tr><td class="eval-checkbox"></td><td>Best</td></tr>
+              <tr><td class="eval-checkbox"></td><td>Better</td></tr>
+              <tr><td class="eval-checkbox"></td><td>Good</td></tr>
+              <tr><td class="eval-checkbox"></td><td>Need Improvement</td></tr>
+            </tbody>
+          </table>
+        </td>
+        <td style="width: 2%;"></td>
+        <td style="width: 49%;">
+          <table class="eval-matrix-table">
+            <thead>
+              <tr><th colspan="2">Co-Curricular Activities</th></tr>
+            </thead>
+            <tbody>
+              <tr><td class="eval-checkbox"></td><td>Sports</td></tr>
+              <tr><td class="eval-checkbox"></td><td>Cultural Function</td></tr>
+              <tr><td class="eval-checkbox"></td><td>Scout</td></tr>
+              <tr><td class="eval-checkbox"></td><td>Math Olympiad</td></tr>
+            </tbody>
           </table>
         </td>
       </tr>
