@@ -34,6 +34,10 @@ class Mark extends Model
             $writtenPass   = $subject->written_pass_mark ?? 33;
             $mcqPass       = $subject->mcq_pass_mark ?? 0;
             $practicalPass = $subject->practical_pass_mark ?? 0;
+            
+            // 🌟 Grab Overall Pass Config
+            $overallPassOnly = $subject->overall_pass_only ?? false;
+            $overallPassMark = $subject->overall_pass_mark ?? 33;
 
             if ($subject && method_exists($subject, 'getMarksForExam')) {
                 $examSettings = $subject->getMarksForExam($mark->exam_id);
@@ -50,14 +54,15 @@ class Mark extends Model
                 if (isset($examSettings['written_pass_mark']))   $writtenPass   = $examSettings['written_pass_mark'];
                 if (isset($examSettings['mcq_pass_mark']))       $mcqPass       = $examSettings['mcq_pass_mark'];
                 if (isset($examSettings['practical_pass_mark'])) $practicalPass = $examSettings['practical_pass_mark'];
+                if (isset($examSettings['overall_pass_only']))   $overallPassOnly = $examSettings['overall_pass_only'];
+                if (isset($examSettings['overall_pass_mark']))   $overallPassMark = $examSettings['overall_pass_mark'];
             }
 
             // 🌟 3. EVALUATE PASS / FAIL STATUS 🌟
             $isPassed = true;
 
-            if ($subject && $subject->overall_pass_only) {
-                // Combined Rule: Student passes if total marks >= overall pass mark
-                $overallPassMark = $subject->overall_pass_mark ?? 33;
+            if ($overallPassOnly) {
+                // Combined Rule: Student passes if total marks >= overall pass mark, ignoring individual limits
                 $isPassed = ($mark->marks_obtained >= $overallPassMark);
             } else {
                 // Strict Individual Rule: Check each paper component

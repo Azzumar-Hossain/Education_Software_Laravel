@@ -30,21 +30,6 @@ class EnrollmentResource extends Resource
 
     protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
 
-    // 🌟 ACCESS CONTROL METHOD 🌟
-    //public static function canViewAny(): bool
-    //{
-    //    $user = auth()->user();
-
-    //    if (!$user) {
-    //        return false;
-    //    }
-
-    //    // Admins always see it, otherwise rely ONLY on Shield permissions
-    //    return in_array($user->type, ['super_admin', 'admin']) 
-    //        || $user->hasRole(['super_admin', 'admin'])
-    //        || $user->can('view_any_enrollment'); // 👈 Checks Shield permission
-    //}
-
     public static function form(Form $form): Form
     {
         return $form
@@ -64,8 +49,8 @@ class EnrollmentResource extends Resource
                     ->relationship('schoolClass', 'name')
                     ->label('Class')
                     ->required()
-                    ->live() // 👈 This makes the form react immediately when the class changes
-                    ->afterStateUpdated(fn (Set $set) => $set('section_id', null)), // 👈 Clears the section dropdown when class changes
+                    ->live() 
+                    ->afterStateUpdated(fn (Set $set) => $set('section_id', null)), 
 
                 Forms\Components\Select::make('section_id')
                     ->label('Section')
@@ -73,7 +58,7 @@ class EnrollmentResource extends Resource
                         name: 'section', 
                         titleAttribute: 'name',
                         modifyQueryUsing: fn (Builder $query, Get $get) => $query->whereHas(
-                            'schoolClasses', // 👈 This filters Sections to only those linked to the chosen Class
+                            'schoolClasses', 
                             fn (Builder $q) => $q->where('school_classes.id', $get('school_class_id'))
                         )
                     )
@@ -118,7 +103,6 @@ class EnrollmentResource extends Resource
                     ->nullable()
                     ->helperText('Select the 4th subject matching this student group stream.'),
 
-                // 🌟 ADDED: STATUS DROPDOWN FOR MANUAL EDITING 🌟
                 Forms\Components\Select::make('status')
                     ->label('Enrollment Status')
                     ->options([
@@ -186,10 +170,12 @@ class EnrollmentResource extends Resource
                         default => 'gray',
                     }),
 
+                // 🌟 UPDATED EXAM STATUS LOGIC 🌟
                 Tables\Columns\TextColumn::make('exam_status')
                     ->label('Exam Status')
                     ->getStateUsing(function ($record) {
-                        $marks = Mark::where('student_id', $record->user_id)
+                        $marks = Mark::with('subject')
+                            ->where('student_id', $record->user_id)
                             ->where('academic_year_id', $record->academic_year_id)
                             ->where('school_class_id', $record->school_class_id)
                             ->get();
@@ -198,19 +184,104 @@ class EnrollmentResource extends Resource
                             return 'Pending Marks';
                         }
 
-                        $hasFailed = $marks->where('grade', 'F')->isNotEmpty();
+                        // Filter incompatible subjects (e.g. Science group without General Science)
+                        $groupName = strtolower($record->study_group ?? '');
+                        $filteredMarks = $marks->filter(function($mark) use ($groupName) {
+                            if (!$mark->subject) return false;
+                            $subCode = (string) $mark->subject->code;
+                            $subName = strtolower($mark->subject->name);
+                            
+                            if ($groupName === 'science') {
+                                if ($subCode === '127' || str_contains($subName, 'general science') || str_contains($subName, 'সাধারণ বিজ্ঞান')) return false;
+                            }
+                            if (in_array($groupName, ['arts/humanities', 'arts', 'humanities', 'commerce'])) {
+                                if (in_array($subCode, ['136', '137', '138'])) return false;
+                            }
+                            return true;
+                        })->values();
 
+                        $hasFailed = false;
+                        $processedIds = [];
+
+                        // Evaluate true pass/fail with Combined Subject Rules
+                        foreach ($filteredMarks as $mark) {
+                            if (in_array($mark->id, $processedIds)) continue;
+
+                            $partnerMark = null;
+                            if ($mark->subject->linked_subject_id) {
+                                $partnerMark = $filteredMarks->firstWhere('subject_id', $mark->subject->linked_subject_id);
+                            } else {
+                                $partnerMark = $filteredMarks->where('subject.linked_subject_id', $mark->subject_id)->first();
+                                if ($partnerMark) {
+                                    $temp = $mark; $mark = $partnerMark; $partnerMark = $temp;
+                                }
+                            }
+
+                            $subName = strtolower($mark->subject->name ?? '');
+                            $subType = strtolower($mark->subject->subject_type ?? $mark->subject->type ?? '');
+                            $isOptional = (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional');
+
+                            if ($partnerMark) {
+                                $rules1 = $mark->subject->getMarksForExam($mark->exam_id);
+                                $rules2 = $partnerMark->subject->getMarksForExam($mark->exam_id);
+                                
+                                $overallPassOnly = ($rules1['overall_pass_only'] ?? $mark->subject->overall_pass_only ?? false) || 
+                                                   ($rules2['overall_pass_only'] ?? $partnerMark->subject->overall_pass_only ?? false);
+
+                                $opm1 = $rules1['overall_pass_mark'] ?? $mark->subject->overall_pass_mark ?? 33;
+                                $opm2 = $rules2['overall_pass_mark'] ?? $partnerMark->subject->overall_pass_mark ?? 33;
+                                $combinedOverallPassMark = $opm1 + $opm2;
+
+                                $pass1 = $rules1['written_pass_mark'] ?? $mark->subject->written_pass_mark ?? 33;
+                                $pass2 = $rules2['written_pass_mark'] ?? $partnerMark->subject->written_pass_mark ?? 33;
+                                $combinedRequiredPass = $pass1 + $pass2;
+
+                                $mcq1Pass = $rules1['mcq_pass_mark'] ?? $mark->subject->mcq_pass_mark ?? 0;
+                                $mcq2Pass = $rules2['mcq_pass_mark'] ?? $partnerMark->subject->mcq_pass_mark ?? 0;
+                                $combinedMcqObt = ($mark->mcq_mark ?? 0) + ($partnerMark->mcq_mark ?? 0);
+                                $combinedMcqPass = $mcq1Pass + $mcq2Pass;
+
+                                $combinedObt = $mark->marks_obtained + $partnerMark->marks_obtained;
+
+                                if ($overallPassOnly) {
+                                    $isComponentFailed = ($combinedObt < $combinedOverallPassMark);
+                                } else {
+                                    $mcqFail = ($combinedMcqPass > 0) && ($combinedMcqObt < $combinedMcqPass);
+                                    $isComponentFailed = ($combinedObt < $combinedRequiredPass) || $mcqFail;
+                                }
+
+                                if (!$isOptional && $isComponentFailed) {
+                                    $hasFailed = true;
+                                }
+
+                                $processedIds[] = $mark->id;
+                                $processedIds[] = $partnerMark->id;
+                            } else {
+                                if (!$isOptional && trim($mark->grade) === 'F') {
+                                    $hasFailed = true;
+                                }
+                                $processedIds[] = $mark->id;
+                            }
+                        }
+
+                        // Determine Incomplete Status with same Group exclusions
                         $requiredSubjectsCount = Subject::whereHas('studyGroups', function($q) use ($record) {
                                 $q->where('study_groups.name', $record->study_group);
                             })
                             ->get()
-                            ->filter(function($subject) {
+                            ->filter(function($subject) use ($groupName) {
                                 $type = $subject->type ?? $subject->subject_type ?? '';
+                                $subCode = (string) $subject->code;
+                                $subName = strtolower($subject->name);
+                                
+                                if ($groupName === 'science' && ($subCode === '127' || str_contains($subName, 'general science') || str_contains($subName, 'সাধারণ বিজ্ঞান'))) return false;
+                                if (in_array($groupName, ['arts/humanities', 'arts', 'humanities', 'commerce']) && in_array($subCode, ['136', '137', '138'])) return false;
+
                                 return !in_array($type, ['Optional', '4th / Optional Subject', 'Elective / Optional', 'Practical']);
                             })
                             ->count();
 
-                        $subjectsTaken = $marks->pluck('subject_id')->unique()->count();
+                        $subjectsTaken = $filteredMarks->pluck('subject_id')->unique()->count();
                         $isIncomplete = $subjectsTaken < $requiredSubjectsCount;
 
                         return ($hasFailed || $isIncomplete) ? 'Failed' : 'Passed';
@@ -267,47 +338,13 @@ class EnrollmentResource extends Resource
                                 'Commerce' => 'Commerce',
                                 'General' => 'General',
                             ]),
-
-                        Forms\Components\Select::make('exam_status')
-                            ->label('Filter by Exam Status')
-                            ->options([
-                                'passed' => 'Passed Students',
-                                'failed' => 'Failed Students',
-                            ]),
                     ])
                     ->query(function (Builder $query, array $data): Builder {
                         return $query
                             ->when($data['academic_year_id'], fn($q, $id) => $q->where('academic_year_id', $id))
                             ->when($data['school_class_id'], fn($q, $id) => $q->where('school_class_id', $id))
                             ->when($data['section_id'], fn($q, $id) => $q->where('section_id', $id))
-                            ->when($data['study_group'], fn($q, $group) => $q->where('study_group', $group))
-                            ->when($data['exam_status'], function (Builder $q, $status) {
-                                if ($status === 'failed') {
-                                    $q->whereExists(function ($sub) {
-                                        $sub->select(DB::raw(1))
-                                            ->from('marks')
-                                            ->whereColumn('marks.student_id', 'enrollments.user_id')
-                                            ->whereColumn('marks.academic_year_id', 'enrollments.academic_year_id')
-                                            ->whereColumn('marks.school_class_id', 'enrollments.school_class_id')
-                                            ->where('marks.grade', 'F');
-                                    });
-                                } elseif ($status === 'passed') {
-                                    $q->whereExists(function ($sub) {
-                                        $sub->select(DB::raw(1))
-                                            ->from('marks')
-                                            ->whereColumn('marks.student_id', 'enrollments.user_id')
-                                            ->whereColumn('marks.academic_year_id', 'enrollments.academic_year_id')
-                                            ->whereColumn('marks.school_class_id', 'enrollments.school_class_id');
-                                    })->whereNotExists(function ($sub) {
-                                        $sub->select(DB::raw(1))
-                                            ->from('marks')
-                                            ->whereColumn('marks.student_id', 'enrollments.user_id')
-                                            ->whereColumn('marks.academic_year_id', 'enrollments.academic_year_id')
-                                            ->whereColumn('marks.school_class_id', 'enrollments.school_class_id')
-                                            ->where('marks.grade', 'F');
-                                    });
-                                }
-                            });
+                            ->when($data['study_group'], fn($q, $group) => $q->where('study_group', $group));
                     })
                     ->indicateUsing(function (array $data): array {
                         $indicators = [];
@@ -322,9 +359,6 @@ class EnrollmentResource extends Resource
                         }
                         if ($data['study_group'] ?? null) {
                             $indicators[] = 'Group: ' . $data['study_group'];
-                        }
-                        if ($data['exam_status'] ?? null) {
-                            $indicators[] = 'Exam Status: ' . ($data['exam_status'] === 'passed' ? 'Passed' : 'Failed');
                         }
                         return $indicators;
                     }),
@@ -508,7 +542,6 @@ class EnrollmentResource extends Resource
             ])
 
             ->actions([
-                // 🌟 ADDED: TRANSFER STUDENT QUICK ACTION 🌟
                 Tables\Actions\Action::make('transfer_student')
                     ->label('Transfer')
                     ->icon('heroicon-o-archive-box-arrow-down')
@@ -732,7 +765,6 @@ class EnrollmentResource extends Resource
         $user = auth()->user();
 
         if ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
-            // 🌟 UPDATED: Changed 'user_id' to 'teacher_id'
             $classTeacherAllocations = \App\Models\ClassTeacher::where('teacher_id', $user->id)->get();
 
             $assignedClassIds = $classTeacherAllocations->pluck('school_class_id')->unique()->filter();

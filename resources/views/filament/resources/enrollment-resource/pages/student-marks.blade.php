@@ -111,18 +111,30 @@
                             $combinedObt = $mark->marks_obtained + $partnerMark->marks_obtained;
                             $combinedPerc = $combinedMax > 0 ? ($combinedObt / $combinedMax) * 100 : 0;
                             
-                            // COMBINED PASS RULE FOR PARTNER SUBJECTS (BANGLA/ENGLISH): 66/200
-                            $pass1 = $rules1['written_pass'] ?? $mark->subject->written_pass ?? 33;
-                            $pass2 = $rules2['written_pass'] ?? $partnerMark->subject->written_pass ?? 33;
+                            // 🌟 OVERALL PASS RULE INTEGRATION 🌟
+                            $overallPassOnly = ($rules1['overall_pass_only'] ?? $mark->subject->overall_pass_only ?? false) || 
+                                               ($rules2['overall_pass_only'] ?? $partnerMark->subject->overall_pass_only ?? false);
+
+                            $opm1 = $rules1['overall_pass_mark'] ?? $mark->subject->overall_pass_mark ?? 33;
+                            $opm2 = $rules2['overall_pass_mark'] ?? $partnerMark->subject->overall_pass_mark ?? 33;
+                            $combinedOverallPassMark = $opm1 + $opm2;
+
+                            $pass1 = $rules1['written_pass_mark'] ?? $mark->subject->written_pass_mark ?? 33;
+                            $pass2 = $rules2['written_pass_mark'] ?? $partnerMark->subject->written_pass_mark ?? 33;
                             $combinedRequiredPass = $pass1 + $pass2;
 
-                            $mcq1Pass = $rules1['mcq_pass'] ?? $mark->subject->mcq_pass ?? 0;
-                            $mcq2Pass = $rules2['mcq_pass'] ?? $partnerMark->subject->mcq_pass ?? 0;
+                            $mcq1Pass = $rules1['mcq_pass_mark'] ?? $mark->subject->mcq_pass_mark ?? 0;
+                            $mcq2Pass = $rules2['mcq_pass_mark'] ?? $partnerMark->subject->mcq_pass_mark ?? 0;
                             $combinedMcqObt = ($mark->mcq_mark ?? 0) + ($partnerMark->mcq_mark ?? 0);
                             $combinedMcqPass = $mcq1Pass + $mcq2Pass;
 
-                            $mcqFail = ($combinedMcqPass > 0) && ($combinedMcqObt < $combinedMcqPass);
-                            $isComponentFailed = ($combinedObt < $combinedRequiredPass) || $mcqFail;
+                            // Apply logic depending on the configuration
+                            if ($overallPassOnly) {
+                                $isComponentFailed = ($combinedObt < $combinedOverallPassMark);
+                            } else {
+                                $mcqFail = ($combinedMcqPass > 0) && ($combinedMcqObt < $combinedMcqPass);
+                                $isComponentFailed = ($combinedObt < $combinedRequiredPass) || $mcqFail;
+                            }
 
                             if ($isComponentFailed) {
                                 $cGrade = 'F';
@@ -322,7 +334,75 @@
                                 $finalGroupedMarks = [];
                                 $processedFinalIds = [];
 
-                                // [Keep your existing grouping logic here...]
+                                // Cumulative Final Result Grouping
+                                foreach($validAllMarks as $mark) {
+                                    if(in_array($mark->id, $processedFinalIds)) continue;
+
+                                    $partnerMark = null;
+                                    if ($mark->subject->linked_subject_id) {
+                                        $partnerMark = $validAllMarks->firstWhere('subject_id', $mark->subject->linked_subject_id);
+                                    } else {
+                                        $partnerMark = $validAllMarks->where('subject.linked_subject_id', $mark->subject_id)->first();
+                                        if ($partnerMark) {
+                                            $temp = $mark; $mark = $partnerMark; $partnerMark = $temp;
+                                        }
+                                    }
+
+                                    $rules1 = $mark->subject->getMarksForExam($mark->exam_id);
+                                    $max1 = $rules1['full_marks'] > 0 ? $rules1['full_marks'] : 100;
+
+                                    if ($partnerMark) {
+                                        $rules2 = $partnerMark->subject->getMarksForExam($mark->exam_id);
+                                        $max2 = $rules2['full_marks'] > 0 ? $rules2['full_marks'] : 100;
+                                        
+                                        $combinedMax = $max1 + $max2;
+                                        $combinedObt = $mark->marks_obtained + $partnerMark->marks_obtained;
+                                        
+                                        $overallPassOnly = ($rules1['overall_pass_only'] ?? $mark->subject->overall_pass_only ?? false) || 
+                                                           ($rules2['overall_pass_only'] ?? $partnerMark->subject->overall_pass_only ?? false);
+
+                                        $opm1 = $rules1['overall_pass_mark'] ?? $mark->subject->overall_pass_mark ?? 33;
+                                        $opm2 = $rules2['overall_pass_mark'] ?? $partnerMark->subject->overall_pass_mark ?? 33;
+                                        $combinedOverallPassMark = $opm1 + $opm2;
+
+                                        if ($overallPassOnly) {
+                                            $isComponentFailed = ($combinedObt < $combinedOverallPassMark);
+                                        } else {
+                                            $pass1 = $rules1['written_pass_mark'] ?? $mark->subject->written_pass_mark ?? 33;
+                                            $pass2 = $rules2['written_pass_mark'] ?? $partnerMark->subject->written_pass_mark ?? 33;
+                                            $mcq1Pass = $rules1['mcq_pass_mark'] ?? $mark->subject->mcq_pass_mark ?? 0;
+                                            $mcq2Pass = $rules2['mcq_pass_mark'] ?? $partnerMark->subject->mcq_pass_mark ?? 0;
+                                            $combinedMcqObt = ($mark->mcq_mark ?? 0) + ($partnerMark->mcq_mark ?? 0);
+                                            
+                                            $mcqFail = (($mcq1Pass + $mcq2Pass) > 0) && ($combinedMcqObt < ($mcq1Pass + $mcq2Pass));
+                                            $isComponentFailed = ($combinedObt < ($pass1 + $pass2)) || $mcqFail;
+                                        }
+
+                                        $cGrade = $isComponentFailed ? 'F' : $getGradeData($combinedMax > 0 ? ($combinedObt / $combinedMax) * 100 : 0, false)['grade'];
+
+                                        $cleanName = trim(preg_replace('/1st.*|2nd.*/i', '', $mark->subject->name));
+
+                                        $finalGroupedMarks[] = [
+                                            'subject_model' => $mark->subject,
+                                            'name' => $cleanName,
+                                            'max' => $combinedMax,
+                                            'obt' => $combinedObt,
+                                            'grade' => $cGrade,
+                                        ];
+                                        
+                                        $processedFinalIds[] = $mark->id;
+                                        $processedFinalIds[] = $partnerMark->id;
+                                    } else {
+                                        $finalGroupedMarks[] = [
+                                            'subject_model' => $mark->subject,
+                                            'name' => $mark->subject->name,
+                                            'max' => $max1,
+                                            'obt' => $mark->marks_obtained,
+                                            'grade' => trim($mark->grade),
+                                        ];
+                                        $processedFinalIds[] = $mark->id;
+                                    }
+                                }
 
                                 $cumulativeCorePercentages = [];
                                 $hasCumulativeCoreFail = false;
@@ -333,10 +413,7 @@
                                     $subType = strtolower($row['subject_model']->subject_type ?? $row['subject_model']->type ?? '');
                                     $isOptional = (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional');
 
-                                    $grandTotalMax += $row['max'];
-
                                     if ($isOptional) {
-                                        // 🌟 Add marks above 40 to Grand Total
                                         if ($row['obt'] > 40.0) {
                                             $optionalBonusMarksFinal = $row['obt'] - 40.0;
                                         }
@@ -356,7 +433,6 @@
                                     }
                                 }
 
-                                // 🌟 Grand Total Obtained = Core Total + Marks Above 40
                                 $grandTotalObtained = $coreObtainedSum + $optionalBonusMarksFinal;
 
                                 $finalCoreCount = count($cumulativeCorePercentages);
@@ -382,7 +458,6 @@
                             @foreach($finalGroupedMarks as $row)
                                 @php
                                     $grandTotalMax += $row['max'];
-                                    $grandTotalObtained += $row['obt'];
                                 @endphp
                                 <tr class="hover:bg-indigo-50 dark:hover:bg-gray-700 transition-colors">
                                     <td class="px-6 py-4 font-bold text-gray-900 dark:text-white">{{ $row['name'] }}</td>

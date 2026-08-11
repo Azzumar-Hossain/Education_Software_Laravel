@@ -75,7 +75,27 @@ class MarksImportTemplateExport implements FromCollection, WithHeadings, WithTit
             $query->where('section_id', $this->sectionId);
         }
 
-        return $query->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')->get();
+        $enrollments = $query->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')->get();
+
+        // 🌟 APPLY RELIGION FILTER FOR TEMPLATE GENERATION
+        $subNameLower = strtolower($this->subjectName);
+        $isReligionSubject = str_contains($subNameLower, 'islam') || str_contains($subNameLower, 'hindu') || str_contains($subNameLower, 'christian') || str_contains($subNameLower, 'buddhi');
+
+        if ($isReligionSubject) {
+            return $enrollments->filter(function ($enrollment) use ($subNameLower) {
+                $studentRel = strtolower(trim($enrollment->user->religion ?? ''));
+                
+                // Mismatch rules
+                if (str_contains($subNameLower, 'islam') && $studentRel !== 'islam') return false;
+                if (str_contains($subNameLower, 'hindu') && $studentRel !== 'hinduism' && $studentRel !== 'hindu') return false;
+                if (str_contains($subNameLower, 'christian') && $studentRel !== 'christianity' && $studentRel !== 'christian') return false;
+                if (str_contains($subNameLower, 'buddhi') && $studentRel !== 'buddhism' && $studentRel !== 'buddhi') return false;
+                
+                return true; // Keep student if religion matches the subject
+            })->values(); // Reset array keys
+        }
+
+        return $enrollments;
     }
 
     public function map($enrollment): array

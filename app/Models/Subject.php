@@ -66,6 +66,13 @@ class Subject extends Model
                     'mcq_total' => $override['mcq_total'] ?? 0,
                     'practical_total' => $override['practical_total'] ?? 0,
                     'full_marks' => ($override['written_total'] ?? 0) + ($override['mcq_total'] ?? 0) + ($override['practical_total'] ?? 0),
+                    
+                    // 🌟 MUST RETURN PASS MARKS HERE TOO
+                    'written_pass_mark' => $override['written_pass_mark'] ?? $this->written_pass_mark,
+                    'mcq_pass_mark' => $override['mcq_pass_mark'] ?? $this->mcq_pass_mark,
+                    'practical_pass_mark' => $override['practical_pass_mark'] ?? $this->practical_pass_mark,
+                    'overall_pass_only' => $override['overall_pass_only'] ?? $this->overall_pass_only,
+                    'overall_pass_mark' => $override['overall_pass_mark'] ?? $this->overall_pass_mark,
                 ];
             }
         }
@@ -76,9 +83,16 @@ class Subject extends Model
             'mcq_total' => $this->mcq_total,
             'practical_total' => $this->practical_total,
             'full_marks' => $this->written_total + $this->mcq_total + $this->practical_total,
+            
+            // 🌟 ENSURE DEFAULTS ARE PASSED
+            'written_pass_mark' => $this->written_pass_mark,
+            'mcq_pass_mark' => $this->mcq_pass_mark,
+            'practical_pass_mark' => $this->practical_pass_mark,
+            'overall_pass_only' => $this->overall_pass_only,
+            'overall_pass_mark' => $this->overall_pass_mark,
         ];
     }
-
+    
     public function getFullLabelAttribute()
     {
         // If the code is missing, just return the name. If it exists, return "Name (Code)"

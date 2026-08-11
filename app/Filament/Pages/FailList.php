@@ -203,14 +203,31 @@ class FailList extends Page implements HasForms
 
                 $totalMarks = $allMarks->sum('marks_obtained');
 
-                $failedSubjectsList = $failedMarks->map(function ($mark) {
+                // 🌟 GROUPING LOGIC FOR COMBINED SUBJECTS 🌟
+                $failedSubjectNames = [];
+
+                foreach ($failedMarks as $mark) {
                     $subName = Subject::find($mark->subject_id)?->name ?? 'Unknown';
-                    $cleanName = trim(preg_replace('/\(.*\)/u', '', $subName));
-                    $words = explode(' ', $cleanName);
-                    $prefix = !empty($words[0]) ? ucfirst(strtolower($words[0])) : 'Sub';
+                    $subNameLower = strtolower($subName);
                     
-                    return substr($prefix, 0, 4) . " ({$mark->grade})";
-                })->implode(', ');
+                    if (str_contains($subNameLower, 'bangla')) {
+                        // Merge Bangla 1st & 2nd into a single key
+                        $failedSubjectNames['bangla'] = "Bang ({$mark->grade})";
+                    } elseif (str_contains($subNameLower, 'english')) {
+                        // Merge English 1st & 2nd into a single key
+                        $failedSubjectNames['english'] = "Engl ({$mark->grade})";
+                    } else {
+                        // Treat all other subjects normally
+                        $cleanName = trim(preg_replace('/\(.*\)/u', '', $subName));
+                        $words = explode(' ', $cleanName);
+                        $prefix = !empty($words[0]) ? ucfirst(strtolower($words[0])) : 'Sub';
+                        
+                        $failedSubjectNames[$mark->subject_id] = substr($prefix, 0, 4) . " ({$mark->grade})";
+                    }
+                }
+
+                $groupedFailCount = count($failedSubjectNames);
+                $failedSubjectsList = implode(', ', $failedSubjectNames);
 
                 $calculatedFailRecords[] = [
                     'student_id'               => $enrollment->user->student_id ?? 'N/A',
@@ -219,7 +236,7 @@ class FailList extends Page implements HasForms
                     'section_name'             => $enrollment->section->name ?? 'N/A',
                     'group_name'                => $enrollment->study_group ?? 'General',
                     'total_marks'              => (float)$totalMarks,
-                    'fail_count'               => $failedMarks->count(),
+                    'fail_count'               => $groupedFailCount, // 🌟 Updated to use grouped count
                     'failed_subjects_summary'  => $failedSubjectsList,
                 ];
             }
