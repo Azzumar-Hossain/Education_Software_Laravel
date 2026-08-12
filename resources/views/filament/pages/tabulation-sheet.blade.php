@@ -14,14 +14,6 @@
             $academicYearId = $this->data['academic_year_id'];
             $classId = $this->data['school_class_id'];
 
-            $peerTotals = \App\Models\Mark::where('academic_year_id', $academicYearId)
-                ->where('school_class_id', $classId)
-                ->where('exam_id', $examId)
-                ->select('student_id', \DB::raw('SUM(marks_obtained) as aggregate_score'))
-                ->groupBy('student_id')
-                ->orderBy('aggregate_score', 'DESC')
-                ->get();
-
             // DYNAMIC SITE SETTINGS
             $siteSetting = \App\Models\SiteSetting::first() 
                 ?? \Illuminate\Support\Facades\DB::table('site_settings')->first();
@@ -146,19 +138,14 @@
                             $student = $enrollment->user;
                             $studentReligion = strtolower(trim($student->religion ?? ''));
                             
-                            // 🌟 READ THE EXACT GRAND TOTAL PRE-CALCULATED BY TABULATIONSHEET.PHP
+                            // 🌟 READ PRE-CALCULATED DATA FROM CONTROLLER
                             $studentGrandTotal = is_array($studentData) ? (float) $studentData['grand_total'] : 0.0;
                             $calculatedGPA     = is_array($studentData) ? $studentData['gpa'] : '0.00';
                             $calculatedGrade   = is_array($studentData) ? $studentData['grade'] : 'F';
                             $hasFailed         = is_array($studentData) ? $studentData['has_core_fail'] : false;
 
-                            // Template expected variables
-                            $gpaSum       = (float) $calculatedGPA;
-                            $subjectCount = count($subjects ?? []);
-
-                            // Rank & Page break calculations
-                            $rankIndex   = isset($peerTotals) ? $peerTotals->search(fn($item) => $item->student_id == $student->id) : false;
-                            $position    = ($rankIndex !== false) ? ($rankIndex + 1) : '--';
+                            // 🌟 RANKING POSITION FROM PRE-SORTED LIST IN CONTROLLER
+                            $position    = $loopIndex + 1;
                             $rowsPerPage = (int) ($data['rows_per_page'] ?? 7);
                             $isPageBreak = ($loopIndex > 0) && ($loopIndex % $rowsPerPage === 0);
                         @endphp
@@ -189,20 +176,8 @@
                                     $isOptionalSubject = ($subject->subject_type === 'Optional' || $subject->type === 'Optional');
                                     $optionalMismatch = ($isOptionalSubject && (int)$enrollment->optional_subject_id !== (int)$subject->id);
 
-                                    $mark = (!$religionMismatch && !$optionalMismatch)
-                                        ? \App\Models\Mark::where('student_id', $enrollment->user_id)
-                                            ->where('exam_id', $this->data['exam_id'])
-                                            ->where('subject_id', $subject->id)
-                                            ->first()
-                                        : null;
-
-                                    if ($mark && !$religionMismatch && !$optionalMismatch) {
-                                        $gpaSum += (float)$mark->gpa;
-                                        $subjectCount++;
-                                        if ($mark->grade === 'F') {
-                                            $hasFailed = true;
-                                        }
-                                    }
+                                    $studentMarksCollection = is_array($studentData) ? $studentData['marks'] : collect();
+                                    $mark = (!$religionMismatch && !$optionalMismatch) ? $studentMarksCollection->get($subject->id) : null;
                                 @endphp
 
                                 @if($religionMismatch || $optionalMismatch)
@@ -227,11 +202,6 @@
                                 @endif
                             @endforeach
 
-                            @php
-                                $finalGPA = ($hasFailed || $subjectCount === 0) ? '0.00' : number_format($gpaSum / $subjectCount, 2);
-                                $finalGrade = $hasFailed ? 'F' : ($finalGPA == '5.00' ? 'A+' : ($finalGPA >= '4.00' ? 'A' : ($finalGPA >= '3.50' ? 'A-' : ($finalGPA >= '3.00' ? 'B' : ($finalGPA >= '2.00' ? 'C' : 'D')))));
-                            @endphp
-
                             <!-- Total Marks Cell -->
                             <td class="font-bold border border-gray-300 px-2 py-1 text-center">
                                 {{ number_format($studentGrandTotal, 1) }}
@@ -246,6 +216,8 @@
                             <td class="font-bold border border-gray-300 px-2 py-1 text-center {{ $calculatedGrade === 'F' ? 'text-red-600' : 'text-green-600' }}">
                                 {{ $calculatedGrade }}
                             </td>
+
+                            <!-- Position Cell -->
                             <td class="font-mono font-extrabold text-center bg-gray-50/50 dark:bg-gray-800/50 text-blue-600 dark:text-blue-400 text-sm">
                                 {{ $position }}
                             </td>
@@ -489,11 +461,9 @@
                 color-scheme: light !important;
             }
 
-            /* Belt-and-braces: nothing should paint gray behind the page */
             * {
                 box-shadow: none !important;
             }
-            
         }
     </style>
 </x-filament-panels::page>

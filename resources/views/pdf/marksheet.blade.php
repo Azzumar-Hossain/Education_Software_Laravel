@@ -123,17 +123,30 @@
             $combinedObt = $mark->marks_obtained + $partnerMark->marks_obtained;
             $combinedPerc = $combinedMax > 0 ? ($combinedObt / $combinedMax) * 100 : 0;
             
-            $pass1 = $r1['written_pass'] ?? $mark->subject->written_pass ?? 33;
-            $pass2 = $r2['written_pass'] ?? $partnerMark->subject->written_pass ?? 33;
+            // 🌟 OVERALL PASS RULE INTEGRATION 🌟
+            $overallPassOnly = ($r1['overall_pass_only'] ?? $mark->subject->overall_pass_only ?? false) || 
+                               ($r2['overall_pass_only'] ?? $partnerMark->subject->overall_pass_only ?? false);
+
+            $opm1 = $r1['overall_pass_mark'] ?? $mark->subject->overall_pass_mark ?? 33;
+            $opm2 = $r2['overall_pass_mark'] ?? $partnerMark->subject->overall_pass_mark ?? 33;
+            $combinedOverallPassMark = $opm1 + $opm2;
+
+            $pass1 = $r1['written_pass_mark'] ?? $mark->subject->written_pass_mark ?? 33;
+            $pass2 = $r2['written_pass_mark'] ?? $partnerMark->subject->written_pass_mark ?? 33;
             $combinedRequiredPass = $pass1 + $pass2;
 
-            $mcq1Pass = $r1['mcq_pass'] ?? $mark->subject->mcq_pass ?? 0;
-            $mcq2Pass = $r2['mcq_pass'] ?? $partnerMark->subject->mcq_pass ?? 0;
+            $mcq1Pass = $r1['mcq_pass_mark'] ?? $mark->subject->mcq_pass_mark ?? 0;
+            $mcq2Pass = $r2['mcq_pass_mark'] ?? $partnerMark->subject->mcq_pass_mark ?? 0;
             $combinedMcqObt = ($mark->mcq_mark ?? 0) + ($partnerMark->mcq_mark ?? 0);
             $combinedMcqPass = $mcq1Pass + $mcq2Pass;
 
-            $mcqFail = ($combinedMcqPass > 0) && ($combinedMcqObt < $combinedMcqPass);
-            $isComponentFailed = ($combinedObt < $combinedRequiredPass) || $mcqFail;
+            // Apply logic depending on the configuration
+            if ($overallPassOnly) {
+                $isComponentFailed = ($combinedObt < $combinedOverallPassMark);
+            } else {
+                $mcqFail = ($combinedMcqPass > 0) && ($combinedMcqObt < $combinedMcqPass);
+                $isComponentFailed = ($combinedObt < $combinedRequiredPass) || $mcqFail;
+            }
 
             if ($isComponentFailed) {
                 $cGrade = 'F';

@@ -92,7 +92,6 @@ class TabulationSheet extends Page implements HasForms
 
                                     $user = auth()->user();
 
-                                    // If Class Teacher, filter dropdown options to assigned sections only
                                     if ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
                                         $assignedSectionIds = ClassTeacher::where('teacher_id', $user->id)
                                             ->pluck('section_id')
@@ -104,7 +103,6 @@ class TabulationSheet extends Page implements HasForms
                                             ->pluck('name', 'id');
                                     }
 
-                                    // Admin / Super Admin view all sections
                                     return Section::whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $classId))
                                         ->pluck('name', 'id');
                                 })
@@ -196,54 +194,136 @@ class TabulationSheet extends Page implements HasForms
             }
         }
 
-        $enrollments = $query->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')->get();
+        $enrollments = $query->get();
 
-        // 🌟 5. CALCULATE ACCURATE GPA, MARKS, AND GRADE PER STUDENT 🌟
+        // 🌟 5. CALCULATE ACCURATE GPA, MARKS, GRADE & FAIL COUNT PER STUDENT 🌟
         $studentResults = [];
 
         foreach ($enrollments as $enrollment) {
-            $marks = Mark::with('subject')
+            $allMarks = Mark::with('subject')
                 ->where('student_id', $enrollment->user_id)
                 ->where('academic_year_id', $inputs['academic_year_id'])
                 ->where('school_class_id', $classId)
                 ->where('exam_id', $inputs['exam_id'])
                 ->get();
 
+            // Filter out incompatible subjects for calculations
+            $filteredMarks = $allMarks->filter(function($mark) use ($groupName) {
+                if (!$mark->subject) return false;
+                $subCode = (string) $mark->subject->code;
+                $subName = strtolower($mark->subject->name);
+                
+                if (strtolower($groupName) === 'science') {
+                    if ($subCode === '127' || str_contains($subName, 'general science') || str_contains($subName, 'সাধারণ বিজ্ঞান')) return false;
+                }
+                if (in_array(strtolower($groupName), ['arts/humanities', 'arts', 'humanities', 'commerce'])) {
+                    if (in_array($subCode, ['136', '137', '138'])) return false;
+                }
+                return true;
+            })->values();
+
             $coreObtainedSum = 0.0;
             $coreGPAs = [];
-            $hasCoreFail = false;
+            $failedSubjectsCount = 0;
             
             $optionalBonusMarks = 0.0;
             $optionalBonusPoints = 0.00;
 
-            foreach ($marks as $mark) {
-                if (!$mark->subject) continue;
+            $processedIds = [];
+
+            foreach ($filteredMarks as $mark) {
+                if (in_array($mark->id, $processedIds)) continue;
+
+                $partnerMark = null;
+                if ($mark->subject->linked_subject_id) {
+                    $partnerMark = $filteredMarks->firstWhere('subject_id', $mark->subject->linked_subject_id);
+                } else {
+                    $partnerMark = $filteredMarks->where('subject.linked_subject_id', $mark->subject_id)->first();
+                    if ($partnerMark) {
+                        $temp = $mark; $mark = $partnerMark; $partnerMark = $temp;
+                    }
+                }
 
                 $subName = strtolower($mark->subject->name ?? '');
                 $subType = strtolower($mark->subject->subject_type ?? $mark->subject->type ?? '');
-                $isOptional = (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional');
+                
+                $isOptional = (
+                    str_contains($subName, 'higher mathematics') || 
+                    str_contains($subName, 'agriculture') || 
+                    $subType === 'optional' ||
+                    (int) $enrollment->optional_subject_id === (int) $mark->subject_id
+                );
 
-                $obt = (float) $mark->marks_obtained;
-                $gp  = (float) $mark->gpa;
+                if ($partnerMark) {
+                    $rules1 = $mark->subject->getMarksForExam($inputs['exam_id']);
+                    $rules2 = $partnerMark->subject->getMarksForExam($inputs['exam_id']);
+                    
+                    $overallPassOnly = ($rules1['overall_pass_only'] ?? $mark->subject->overall_pass_only ?? false) || 
+                                       ($rules2['overall_pass_only'] ?? $partnerMark->subject->overall_pass_only ?? false);
 
-                if ($isOptional) {
-                    // Rule 1: Add marks above 40 to Grand Total (Obtained - 40)
-                    if ($obt > 40.0) {
-                        $optionalBonusMarks = $obt - 40.0;
+                    $opm1 = $rules1['overall_pass_mark'] ?? $mark->subject->overall_pass_mark ?? 33;
+                    $opm2 = $rules2['overall_pass_mark'] ?? $partnerMark->subject->overall_pass_mark ?? 33;
+                    $combinedOverallPassMark = $opm1 + $opm2;
+
+                    $pass1 = $rules1['written_pass_mark'] ?? $mark->subject->written_pass_mark ?? 33;
+                    $pass2 = $rules2['written_pass_mark'] ?? $partnerMark->subject->written_pass_mark ?? 33;
+                    $combinedRequiredPass = $pass1 + $pass2;
+
+                    $mcq1Pass = $rules1['mcq_pass_mark'] ?? $mark->subject->mcq_pass_mark ?? 0;
+                    $mcq2Pass = $rules2['mcq_pass_mark'] ?? $partnerMark->subject->mcq_pass_mark ?? 0;
+                    $combinedMcqObt = ($mark->mcq_mark ?? 0) + ($partnerMark->mcq_mark ?? 0);
+                    $combinedMcqPass = $mcq1Pass + $mcq2Pass;
+
+                    $combinedObt = $mark->marks_obtained + $partnerMark->marks_obtained;
+                    $combinedMax = ($rules1['full_marks'] ?? 100) + ($rules2['full_marks'] ?? 100);
+                    $perc = $combinedMax > 0 ? ($combinedObt / $combinedMax) * 100 : 0;
+
+                    if ($overallPassOnly) {
+                        $isComponentFailed = ($combinedObt < $combinedOverallPassMark);
+                    } else {
+                        $mcqFail = ($combinedMcqPass > 0) && ($combinedMcqObt < $combinedMcqPass);
+                        $isComponentFailed = ($combinedObt < $combinedRequiredPass) || $mcqFail;
                     }
 
-                    // Rule 2: Add GPA points above 2.00 to GPA accumulator (GP - 2.00)
-                    if ($gp > 2.00) {
-                        $optionalBonusPoints = $gp - 2.00;
+                    $gp = GradeScale::getGradeForMark($perc, $isComponentFailed)['point'];
+
+                    if ($isOptional) {
+                        if ($combinedObt > 40.0) {
+                            $optionalBonusMarks = $combinedObt - 40.0;
+                        }
+                        if ($gp > 2.00) {
+                            $optionalBonusPoints = $gp - 2.00;
+                        }
+                    } else {
+                        $coreObtainedSum += $combinedObt;
+                        $coreGPAs[] = $gp;
+                        if ($isComponentFailed) {
+                            $failedSubjectsCount++;
+                        }
                     }
-                    // Optional subject fail DOES NOT set $hasCoreFail
+
+                    $processedIds[] = $mark->id;
+                    $processedIds[] = $partnerMark->id;
                 } else {
-                    $coreObtainedSum += $obt;
+                    $obt = (float) $mark->marks_obtained;
+                    $gp  = (float) $mark->gpa;
 
-                    if (trim($mark->grade) === 'F') {
-                        $hasCoreFail = true;
+                    if ($isOptional) {
+                        if ($obt > 40.0) {
+                            $optionalBonusMarks = $obt - 40.0;
+                        }
+                        if ($gp > 2.00) {
+                            $optionalBonusPoints = $gp - 2.00;
+                        }
+                    } else {
+                        $coreObtainedSum += $obt;
+                        $coreGPAs[] = $gp;
+                        if (trim($mark->grade) === 'F') {
+                            $failedSubjectsCount++;
+                        }
                     }
-                    $coreGPAs[] = $gp;
+
+                    $processedIds[] = $mark->id;
                 }
             }
 
@@ -252,6 +332,8 @@ class TabulationSheet extends Page implements HasForms
 
             // Calculate Final GPA & Grade
             $coreCount = count($coreGPAs);
+            $hasCoreFail = ($failedSubjectsCount > 0);
+
             if ($hasCoreFail || $coreCount === 0) {
                 $finalGPA = '0.00';
                 $finalGrade = 'F';
@@ -271,13 +353,39 @@ class TabulationSheet extends Page implements HasForms
 
             $studentResults[] = [
                 'enrollment'    => $enrollment,
-                'marks'         => $marks->keyBy('subject_id'),
+                'marks'         => $allMarks->keyBy('subject_id'),
                 'grand_total'   => $grandTotalMarks,
                 'gpa'           => $finalGPA,
                 'grade'         => $finalGrade,
                 'has_core_fail' => $hasCoreFail,
+                'fail_count'    => $failedSubjectsCount,
             ];
         }
+
+        // 🌟 6. MULTI-PRIORITY RANKING SORT ALGORITHM 🌟
+        usort($studentResults, function ($a, $b) {
+            // Priority 1: Passed students always come before Failed students
+            if ($a['has_core_fail'] !== $b['has_core_fail']) {
+                return $a['has_core_fail'] <=> $b['has_core_fail']; // false (0 - Pass) comes before true (1 - Fail)
+            }
+
+            // If BOTH students PASSED: Rank by Total Marks (DESC), then GPA (DESC)
+            if (!$a['has_core_fail']) {
+                if ((float)$b['grand_total'] != (float)$a['grand_total']) {
+                    return (float)$b['grand_total'] <=> (float)$a['grand_total'];
+                }
+                return (float)$b['gpa'] <=> (float)$a['gpa'];
+            }
+
+            // If BOTH students FAILED:
+            // Priority 2: Fewer failed subjects comes first (ASC)
+            if ($a['fail_count'] !== $b['fail_count']) {
+                return $a['fail_count'] <=> $b['fail_count'];
+            }
+
+            // Priority 3: Higher total marks comes first (DESC)
+            return (float)$b['grand_total'] <=> (float)$a['grand_total'];
+        });
 
         $this->students = $studentResults;
     }
