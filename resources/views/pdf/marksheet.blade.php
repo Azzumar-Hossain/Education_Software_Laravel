@@ -41,6 +41,38 @@
         return $subjectModel->name;
     };
 
+    // 🌟 STREAM FILTERING LOGIC 🌟
+    $studentGroup = strtolower($enrollment->study_group ?? '');
+
+    $marks = $marks->filter(function($mark) use ($studentGroup) {
+        if (!$mark->subject) return false;
+
+        $subCode = (string) ($mark->subject->code ?? '');
+        $subName = strtolower($mark->subject->name ?? '');
+
+        // Rule 1: Science students do not take General Science (Code 127)
+        if (in_array($studentGroup, ['science'])) {
+            if ($subCode === '127' || str_contains($subName, 'general science') || str_contains($subName, 'সাধারণ বিজ্ঞান')) {
+                return false;
+            }
+        }
+
+        // Rule 2: Arts / Humanities / Commerce students do not take Pure Science or Science-only BGS (Code 150)
+        if (in_array($studentGroup, ['arts/humanities', 'arts', 'humanities', 'commerce'])) {
+            if (in_array($subCode, ['136', '137', '138'])) { // Physics, Chemistry, Biology
+                return false;
+            }
+            if ($subCode === '150' && (
+                strtolower($mark->subject->studyGroup?->name ?? '') === 'science' || 
+                in_array(strtolower($mark->subject->subject_type ?? $mark->subject->type ?? ''), ['group', 'main'])
+            )) {
+                return false;
+            }
+        }
+
+        return true;
+    });
+
     // --- 2. SINGLE TERM CUMULATIVE WEIGHTAGE ---
     $childExams = \App\Models\Exam::where('parent_exam_id', $exam->id)->get();
 
@@ -123,7 +155,7 @@
             $combinedObt = $mark->marks_obtained + $partnerMark->marks_obtained;
             $combinedPerc = $combinedMax > 0 ? ($combinedObt / $combinedMax) * 100 : 0;
             
-            // 🌟 OVERALL PASS RULE INTEGRATION 🌟
+            // OVERALL PASS RULE INTEGRATION
             $overallPassOnly = ($r1['overall_pass_only'] ?? $mark->subject->overall_pass_only ?? false) || 
                                ($r2['overall_pass_only'] ?? $partnerMark->subject->overall_pass_only ?? false);
 
@@ -140,7 +172,6 @@
             $combinedMcqObt = ($mark->mcq_mark ?? 0) + ($partnerMark->mcq_mark ?? 0);
             $combinedMcqPass = $mcq1Pass + $mcq2Pass;
 
-            // Apply logic depending on the configuration
             if ($overallPassOnly) {
                 $isComponentFailed = ($combinedObt < $combinedOverallPassMark);
             } else {
@@ -466,7 +497,6 @@
             width: 120px;
         }
 
-        /* 🌟 CO-CURRICULAR & MORAL BEHAVIOR TABLES STYLING 🌟 */
         .eval-matrix-table {
             width: 100%;
             border-collapse: collapse;
@@ -786,7 +816,6 @@
       </tr>
     </table>
 
-    <!-- 🌟 MORAL & BEHAVIOR AND CO-CURRICULAR ACTIVITIES TABLES 🌟 -->
     <table class="layout-table" style="margin-top: 6px; margin-bottom: 6px;">
       <tr>
         <td style="width: 49%;">

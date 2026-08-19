@@ -1,10 +1,40 @@
 <x-filament-panels::page>
     @php
+        $studentGroup = strtolower($record->study_group ?? '');
+
         $allMarks = \App\Models\Mark::with(['exam', 'subject'])
             ->where('student_id', $record->user_id)
             ->where('academic_year_id', $record->academic_year_id)
             ->where('school_class_id', $record->school_class_id)
             ->get()
+            ->filter(function($mark) use ($studentGroup) {
+                if (!$mark->subject) return false;
+
+                $subCode = (string) ($mark->subject->code ?? '');
+                $subName = strtolower($mark->subject->name ?? '');
+
+                // Rule 1: Science students do not take General Science (Code 127)
+                if (in_array($studentGroup, ['science'])) {
+                    if ($subCode === '127' || str_contains($subName, 'general science') || str_contains($subName, 'সাধারণ বিজ্ঞান')) {
+                        return false;
+                    }
+                }
+
+                // Rule 2: Arts / Humanities / Commerce students do not take Pure Science or Science-only BGS (Code 150)
+                if (in_array($studentGroup, ['arts/humanities', 'arts', 'humanities', 'commerce'])) {
+                    if (in_array($subCode, ['136', '137', '138'])) { // Physics, Chemistry, Biology
+                        return false;
+                    }
+                    if ($subCode === '150' && (
+                        strtolower($mark->subject->studyGroup?->name ?? '') === 'science' || 
+                        in_array(strtolower($mark->subject->subject_type ?? $mark->subject->type ?? ''), ['group', 'main'])
+                    )) {
+                        return false;
+                    }
+                }
+
+                return true;
+            })
             ->sortBy(fn($m) => (int) ($m->subject->code ?? 999));
             
         $marksGrouped = $allMarks->groupBy('exam_id');

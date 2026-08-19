@@ -184,7 +184,7 @@ class EnrollmentResource extends Resource
                             return 'Pending Marks';
                         }
 
-                        // Filter incompatible subjects (e.g. Science group without General Science)
+                        // Filter incompatible subjects (e.g., Science group without General Science)
                         $groupName = strtolower($record->study_group ?? '');
                         $filteredMarks = $marks->filter(function($mark) use ($groupName) {
                             if (!$mark->subject) return false;
@@ -196,6 +196,10 @@ class EnrollmentResource extends Resource
                             }
                             if (in_array($groupName, ['arts/humanities', 'arts', 'humanities', 'commerce'])) {
                                 if (in_array($subCode, ['136', '137', '138'])) return false;
+                                if ($subCode === '150' && (
+                                    strtolower($mark->subject->studyGroup?->name ?? '') === 'science' || 
+                                    in_array(strtolower($mark->subject->subject_type ?? $mark->subject->type ?? ''), ['group', 'main'])
+                                )) return false;
                             }
                             return true;
                         })->values();
@@ -219,14 +223,14 @@ class EnrollmentResource extends Resource
 
                             $subName = strtolower($mark->subject->name ?? '');
                             $subType = strtolower($mark->subject->subject_type ?? $mark->subject->type ?? '');
-                            $isOptional = (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional');
+                            $isOptional = (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional' || (int)$record->optional_subject_id === (int)$mark->subject_id);
 
                             if ($partnerMark) {
                                 $rules1 = $mark->subject->getMarksForExam($mark->exam_id);
                                 $rules2 = $partnerMark->subject->getMarksForExam($mark->exam_id);
                                 
                                 $overallPassOnly = ($rules1['overall_pass_only'] ?? $mark->subject->overall_pass_only ?? false) || 
-                                                   ($rules2['overall_pass_only'] ?? $partnerMark->subject->overall_pass_only ?? false);
+                                                ($rules2['overall_pass_only'] ?? $partnerMark->subject->overall_pass_only ?? false);
 
                                 $opm1 = $rules1['overall_pass_mark'] ?? $mark->subject->overall_pass_mark ?? 33;
                                 $opm2 = $rules2['overall_pass_mark'] ?? $partnerMark->subject->overall_pass_mark ?? 33;
@@ -264,27 +268,7 @@ class EnrollmentResource extends Resource
                             }
                         }
 
-                        // Determine Incomplete Status with same Group exclusions
-                        $requiredSubjectsCount = Subject::whereHas('studyGroups', function($q) use ($record) {
-                                $q->where('study_groups.name', $record->study_group);
-                            })
-                            ->get()
-                            ->filter(function($subject) use ($groupName) {
-                                $type = $subject->type ?? $subject->subject_type ?? '';
-                                $subCode = (string) $subject->code;
-                                $subName = strtolower($subject->name);
-                                
-                                if ($groupName === 'science' && ($subCode === '127' || str_contains($subName, 'general science') || str_contains($subName, 'সাধারণ বিজ্ঞান'))) return false;
-                                if (in_array($groupName, ['arts/humanities', 'arts', 'humanities', 'commerce']) && in_array($subCode, ['136', '137', '138'])) return false;
-
-                                return !in_array($type, ['Optional', '4th / Optional Subject', 'Elective / Optional', 'Practical']);
-                            })
-                            ->count();
-
-                        $subjectsTaken = $filteredMarks->pluck('subject_id')->unique()->count();
-                        $isIncomplete = $subjectsTaken < $requiredSubjectsCount;
-
-                        return ($hasFailed || $isIncomplete) ? 'Failed' : 'Passed';
+                        return $hasFailed ? 'Failed' : 'Passed';
                     })
                     ->badge()
                     ->color(fn (string $state): string => match ($state) {
