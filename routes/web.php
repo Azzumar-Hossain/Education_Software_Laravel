@@ -391,3 +391,40 @@ Route::get('/print/fail-list', function (\Illuminate\Http\Request $request) {
 
     return view('pdf.fail-list', compact('calculatedFailRecords', 'schoolClass', 'academicYear', 'scope'));
 })->name('print.fail.list');
+
+// 🌟 Native Browser Print Route for Exam Routine
+Route::get('/print/exam-routine', function (\Illuminate\Http\Request $request) {
+    $yearId = $request->query('year');
+    $classId = $request->query('class');
+    $examId = $request->query('exam');
+
+    $routines = \App\Models\ExamRoutine::with(['subject', 'schoolClass', 'exam', 'academicYear'])
+        ->where('academic_year_id', $yearId)
+        ->where('school_class_id', $classId)
+        ->where('exam_id', $examId)
+        ->orderBy('exam_date', 'asc')
+        ->orderBy('start_time', 'asc')
+        ->get();
+
+    if ($routines->isEmpty()) {
+        return "No exam routine schedule found for this selection.";
+    }
+
+    $schoolClass = \App\Models\SchoolClass::find($classId);
+    $exam = \App\Models\Exam::find($examId);
+    $academicYear = \App\Models\AcademicYear::find($yearId);
+
+    // Fetch dynamic school logo and name from settings just like your component does
+    $schoolLogo = asset('images/logo.png');
+    $schoolName = 'Krisnagobindapur High School'; // Defaulting to your UI name
+
+    if (class_exists('\App\Models\Setting')) {
+        $setting = \App\Models\Setting::first();
+        if ($setting) {
+            $schoolLogo = $setting->logo ? asset('storage/' . $setting->logo) : $schoolLogo;
+            $schoolName = $setting->site_name ?? $schoolName;
+        }
+    }
+
+    return view('pdf.exam-routine', compact('routines', 'schoolClass', 'exam', 'academicYear', 'schoolLogo', 'schoolName'));
+})->name('print.exam.routine');

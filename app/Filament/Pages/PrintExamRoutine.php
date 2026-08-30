@@ -138,4 +138,26 @@ class PrintExamRoutine extends Page implements HasForms
                 ->send();
         }
     }
+
+    // Add this right before the final closing brace of the PrintExamRoutine class
+    public function printRoutine()
+    {
+        if (empty($this->routines)) {
+            \Filament\Notifications\Notification::make()
+                ->title('Generate Routine First')
+                ->warning()
+                ->send();
+            return;
+        }
+
+        $inputs = $this->data;
+
+        $url = route('print.exam.routine', [
+            'year'  => $inputs['academic_year_id'],
+            'class' => $inputs['school_class_id'],
+            'exam'  => $inputs['exam_id'],
+        ]);
+
+        $this->js("window.open('{$url}', '_blank');");
+    }
 }
