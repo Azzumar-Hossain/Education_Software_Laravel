@@ -417,4 +417,29 @@ class MeritList extends Page implements HasForms
         if ($g >= 1.00) return 'D';
         return 'F';
     }
+
+    // Add this right before the final closing brace of the MeritList class
+    public function printMeritList()
+    {
+        if (empty($this->meritRecords)) {
+            \Filament\Notifications\Notification::make()
+                ->title('Generate List First')
+                ->warning()
+                ->send();
+            return;
+        }
+
+        $inputs = $this->data;
+
+        $url = route('print.merit.list', [
+            'year'    => $inputs['academic_year_id'],
+            'class'   => $inputs['school_class_id'],
+            'exam'    => $inputs['exam_id'],
+            'scope'   => $inputs['merit_scope'] ?? 'class',
+            'section' => $inputs['section_id'] ?? null,
+            'group'   => $inputs['study_group'] ?? null,
+        ]);
+
+        $this->js("window.open('{$url}', '_blank');");
+    }
 }
