@@ -31,24 +31,16 @@ class PrintMarksheet extends Page implements HasForms
     public ?array $data = [];
     public array $studentsList = [];
 
-    // 🌟 1. DYNAMIC ACCESS CONTROL 🌟
     public static function canAccess(): bool
     {
         $user = auth()->user();
-
-        if (!$user) {
-            return false;
-        }
-
-        return $user->type === 'super_admin'
-            || $user->type === 'admin'
-            || $user->hasRole(['super_admin', 'admin', 'class_teacher'])
-            || $user->can('page_PrintMarksheet');
+        if (!$user) return false;
+        return $user->type === 'super_admin' || $user->type === 'admin' || $user->hasRole(['super_admin', 'admin', 'class_teacher']) || $user->can('page_PrintMarksheet');
     }
 
     public function mount(): void
     {
-        $this->form->fill();
+        $this->form->fill(['result_type' => 'term']);
     }
 
     protected function getHeaderActions(): array
@@ -59,13 +51,9 @@ class PrintMarksheet extends Page implements HasForms
                 ->icon('heroicon-m-arrow-path')
                 ->color('gray')
                 ->action(function () {
-                    $this->form->fill();
+                    $this->form->fill(['result_type' => 'term']);
                     $this->studentsList = [];
-                    
-                    Notification::make()
-                        ->title('Filters Cleared')
-                        ->success()
-                        ->send();
+                    Notification::make()->title('Filters Cleared')->success()->send();
                 }),
         ];
     }
@@ -77,11 +65,18 @@ class PrintMarksheet extends Page implements HasForms
             ->schema([
                 FormSection::make('Generate & Download Batch Marksheets')
                     ->schema([
-                        Grid::make([
-                            'default' => 1,
-                            'md' => 4,
-                        ])->schema([
-                            // 1. ACADEMIC YEAR
+                        Grid::make(['default' => 1, 'md' => 5])->schema([
+                            
+                            Select::make('result_type')
+                                ->label('Marksheet Type')
+                                ->options([
+                                    'term' => 'Term Exam Marksheet',
+                                    'final' => 'Final Cumulative Result',
+                                ])
+                                ->required()
+                                ->live()
+                                ->afterStateUpdated(fn () => $this->studentsList = []),
+
                             Select::make('academic_year_id')
                                 ->label('Academic Year')
                                 ->options(fn () => AcademicYear::pluck('name', 'id'))
@@ -94,7 +89,6 @@ class PrintMarksheet extends Page implements HasForms
                                     $this->studentsList = [];
                                 }),
 
-                            // 2. CLASS
                             Select::make('school_class_id')
                                 ->label('Class')
                                 ->options(fn () => SchoolClass::pluck('name', 'id'))
@@ -106,84 +100,50 @@ class PrintMarksheet extends Page implements HasForms
                                     $this->studentsList = [];
                                 }),
 
-                            // 3. TARGET EXAM
                             Select::make('exam_id')
                                 ->label('Target Exam')
+                                ->visible(fn ($get) => $get('result_type') === 'term')
+                                ->required(fn ($get) => $get('result_type') === 'term')
                                 ->options(function ($get) {
                                     $yearId = $get('academic_year_id');
                                     $classId = $get('school_class_id');
-
-                                    if (!$yearId || !$classId) {
-                                        return [];
-                                    }
+                                    if (!$yearId || !$classId) return [];
 
                                     $query = Exam::query()->where('academic_year_id', $yearId);
-
                                     if (\Schema::hasColumn('exams', 'school_class_id')) {
                                         $query->where(function ($q) use ($classId) {
-                                            $q->whereNull('school_class_id')
-                                              ->orWhere('school_class_id', $classId);
+                                            $q->whereNull('school_class_id')->orWhere('school_class_id', $classId);
                                         });
                                     }
-
                                     if (\Schema::hasTable('marks')) {
-                                        $examIdsWithMarks = Mark::where('academic_year_id', $yearId)
-                                            ->where('school_class_id', $classId)
-                                            ->pluck('exam_id')
-                                            ->unique();
-
-                                        if ($examIdsWithMarks->isNotEmpty()) {
-                                            $query->whereIn('id', $examIdsWithMarks);
-                                        }
+                                        $examIdsWithMarks = Mark::where('academic_year_id', $yearId)->where('school_class_id', $classId)->pluck('exam_id')->unique();
+                                        if ($examIdsWithMarks->isNotEmpty()) $query->whereIn('id', $examIdsWithMarks);
                                     }
 
                                     $exams = $query->with('academicYear')->get();
-
                                     $uniqueExams = [];
                                     foreach ($exams as $exam) {
-                                        $yearName = $exam->academicYear->name ?? '';
-                                        $label = "{$exam->name} ({$yearName})";
-
-                                        if (!in_array($label, $uniqueExams)) {
-                                            $uniqueExams[$exam->id] = $label;
-                                        }
+                                        $label = "{$exam->name} ({$exam->academicYear->name})";
+                                        if (!in_array($label, $uniqueExams)) $uniqueExams[$exam->id] = $label;
                                     }
-
                                     return $uniqueExams;
                                 })
-                                ->placeholder(fn ($get) => (!$get('academic_year_id') || !$get('school_class_id')) 
-                                    ? 'Select Year & Class First' 
-                                    : 'Select Target Exam'
-                                )
-                                ->disabled(fn ($get) => !$get('academic_year_id') || !$get('school_class_id'))
+                                ->placeholder(fn ($get) => (!$get('academic_year_id') || !$get('school_class_id')) ? 'Select Year & Class First' : 'Select Target Exam')
                                 ->searchable()
-                                ->required()
                                 ->live(),
 
-                            // 🌟 2. SECTION SELECTOR (FILTERED FOR CLASS TEACHERS) 🌟
                             Select::make('section_id')
                                 ->label('Select Section')
                                 ->options(function ($get) {
                                     $classId = $get('school_class_id');
                                     if (!$classId) return [];
-
                                     $user = auth()->user();
 
-                                    // If Class Teacher, restrict to assigned sections only
                                     if ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
-                                        $assignedSectionIds = ClassTeacher::where('teacher_id', $user->id)
-                                            ->pluck('section_id')
-                                            ->unique()
-                                            ->filter();
-
-                                        return Section::whereIn('id', $assignedSectionIds)
-                                            ->whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $classId))
-                                            ->pluck('name', 'id');
+                                        $assignedSectionIds = ClassTeacher::where('teacher_id', $user->id)->pluck('section_id')->unique()->filter();
+                                        return Section::whereIn('id', $assignedSectionIds)->whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $classId))->pluck('name', 'id');
                                     }
-
-                                    // Default Admin / Super Admin view
-                                    return Section::whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $classId))
-                                        ->pluck('name', 'id');
+                                    return Section::whereHas('schoolClasses', fn ($q) => $q->where('school_classes.id', $classId))->pluck('name', 'id');
                                 })
                                 ->placeholder('All Sections')
                                 ->live(),
@@ -197,32 +157,32 @@ class PrintMarksheet extends Page implements HasForms
         $this->validate();
         $inputs = $this->data;
         $user = auth()->user();
+        $resultType = $inputs['result_type'] ?? 'term';
 
         $query = Enrollment::with(['user', 'section', 'schoolClass'])
             ->where('academic_year_id', $inputs['academic_year_id'])
             ->where('school_class_id', $inputs['school_class_id']);
 
-        // Scope section filters for class teachers
         if (!empty($inputs['section_id'])) {
             $query->where('section_id', $inputs['section_id']);
         } elseif ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
             $assignedSectionIds = ClassTeacher::where('teacher_id', $user->id)->pluck('section_id')->unique()->filter();
-            if ($assignedSectionIds->isNotEmpty()) {
-                $query->whereIn('section_id', $assignedSectionIds);
-            }
+            if ($assignedSectionIds->isNotEmpty()) $query->whereIn('section_id', $assignedSectionIds);
         }
 
         $enrollments = $query->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')->get();
-
         $validStudents = [];
-        foreach ($enrollments as $e) {
-            $hasMarks = Mark::where('student_id', $e->user_id)
-                ->where('academic_year_id', $inputs['academic_year_id'])
-                ->where('school_class_id', $inputs['school_class_id'])
-                ->where('exam_id', $inputs['exam_id'])
-                ->exists();
 
-            if ($hasMarks) {
+        foreach ($enrollments as $e) {
+            $hasMarksQuery = Mark::where('student_id', $e->user_id)
+                ->where('academic_year_id', $inputs['academic_year_id'])
+                ->where('school_class_id', $inputs['school_class_id']);
+
+            if ($resultType === 'term') {
+                $hasMarksQuery->where('exam_id', $inputs['exam_id']);
+            }
+
+            if ($hasMarksQuery->exists()) {
                 $validStudents[] = [
                     'id'          => $e->id,
                     'user_id'     => $e->user_id,
@@ -237,17 +197,14 @@ class PrintMarksheet extends Page implements HasForms
 
         if (empty($validStudents)) {
             $this->studentsList = [];
-            Notification::make()
-                ->title('No Marks Found')
-                ->body('No student marks entered for this exam under the selected class/section.')
-                ->warning()
-                ->send();
+            Notification::make()->title('No Marks Found')->warning()->send();
             return;
         }
 
         $this->studentsList = $validStudents;
     }
 
+    // This handles the correct routing redirect
     public function downloadBatchMarksheets()
     {
         $inputs = $this->data;
@@ -257,73 +214,29 @@ class PrintMarksheet extends Page implements HasForms
             return;
         }
 
-        // 🌟 1. EXTEND TIMEOUT & MEMORY LIMITS
-        ini_set('memory_limit', '1024M');
-        ini_set('pcre.backtrack_limit', '10000000');
-        set_time_limit(600);
+        $resultType = $inputs['result_type'] ?? 'term';
 
-        $studentIds = array_column($this->studentsList, 'id');
-        
-        // 🌟 2. EAGER LOAD ENROLLMENTS
-        $enrollments = Enrollment::with(['user', 'schoolClass', 'section', 'academicYear'])
-            ->whereIn('id', $studentIds)
-            ->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')
-            ->get();
-
-        $userIds = $enrollments->pluck('user_id')->unique()->filter();
-        $exam = Exam::with('academicYear')->findOrFail($inputs['exam_id']);
-
-        // 🌟 3. FETCH ALL MARKS IN ONE SINGLE QUERY
-        $allBatchMarks = Mark::with('subject')
-            ->whereIn('student_id', $userIds)
-            ->where('academic_year_id', $inputs['academic_year_id'])
-            ->where('school_class_id', $inputs['school_class_id'])
-            ->where('exam_id', $exam->id)
-            ->get()
-            ->groupBy('student_id');
-
-        $className   = SchoolClass::find($inputs['school_class_id'])?->name ?? 'Class';
-        $sectionName = !empty($inputs['section_id']) ? Section::find($inputs['section_id'])?->name : 'All_Sections';
-
-        // 🌟 4. INITIALIZE MPDF INSTANCE
-        $mpdf = new \Mpdf\Mpdf([
-            'mode'             => 'utf-8',
-            'format'           => 'A4-P',
-            'margin_left'      => 5,
-            'margin_right'     => 5,
-            'margin_top'       => 5,
-            'margin_bottom'    => 5,
-            'autoScriptToLang' => true,
-            'autoLangToFont'   => true,
-            'tempDir'          => storage_path('app/temp'),
-        ]);
-
-        // 🌟 5. RENDER PAGES EFFICIENTLY
-        foreach ($enrollments as $index => $enrollment) {
-            $studentMarks = $allBatchMarks->get($enrollment->user_id) ?? collect();
-
-            $html = view('pdf.marksheet', [
-                'enrollment' => $enrollment,
-                'exam'       => $exam,
-                'marks'      => $studentMarks,
-            ])->render();
-
-            $mpdf->WriteHTML($html);
-
-            if ($index < count($enrollments) - 1) {
-                $mpdf->AddPage();
-            }
+        if ($resultType === 'final') {
+            $url = route('print.batch.final.marksheet', [
+                'year'    => $inputs['academic_year_id'],
+                'class'   => $inputs['school_class_id'],
+                'section' => $inputs['section_id'] ?? 'N/A',
+            ]);
+        } else {
+            $url = route('print.batch.marksheet', [
+                'year'    => $inputs['academic_year_id'],
+                'class'   => $inputs['school_class_id'],
+                'exam'    => $inputs['exam_id'],
+                'section' => $inputs['section_id'] ?? 'N/A',
+            ]);
         }
 
-        // 🌟 6. SANITIZE FILENAME TO PREVENT SYMFONY SLASHERRORS
-        $cleanClassName   = str_replace(['/', '\\', ' '], '_', $className);
-        $cleanSectionName = str_replace(['/', '\\', ' '], '_', $sectionName);
+        $this->js("window.open('{$url}', '_blank');");
+    }
 
-        $fileName = "Batch_Marksheets_{$cleanClassName}_{$cleanSectionName}_" . date('Ymd') . ".pdf";
-
-        return response()->streamDownload(
-            fn () => print($mpdf->Output('', 'S')),
-            $fileName
-        );
+    // Safety fallback in case your blade button is wired to 'printBatch'
+    public function printBatch()
+    {
+        $this->downloadBatchMarksheets();
     }
 }

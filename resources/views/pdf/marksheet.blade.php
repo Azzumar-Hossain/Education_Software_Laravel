@@ -312,270 +312,300 @@
 
 <head>
     <style>
-        body {
-            font-family: 'SolaimanLipi', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #fff;
-            color: #000;
-            font-size: 11px;
-            margin: 0;
-            padding: 0;
-        }
-        .mark-sheet {
-            width: 100%;
-            background: #fff;
-            border: 3px solid #e6c84b;
-            padding: 8px;
-            box-sizing: border-box;
-        }
-        .inner-border {
-            border: 1.5px solid #e6c84b;
-            padding: 10px;
-        }
-        .layout-table {
-            width: 100%;
-            border-collapse: collapse;
-            border: none !important;
-        }
-        .layout-table td {
-            border: none !important;
-            padding: 0;
-            vertical-align: top;
-        }
-        .school-info {
-            text-align: center;
-            padding: 0 6px;
-        }
-        .school-logo {
-            width: 48px;
-            height: 48px;
-            object-fit: contain;
-            margin: 0 auto 3px auto;
-            display: block;
-        }
-        .school-logo-fallback {
-            width: 40px;
-            height: 40px;
-            margin: 0 auto 3px auto;
-            background: #4CAF50;
-            border-radius: 50%;
-            text-align: center;
-            line-height: 36px;
-            color: #fff;
-            font-weight: bold;
-            font-size: 20px;
-            border: 1.5px solid #e6c84b;
-        }
-        .school-name {
-            font-size: 18px;
-            font-weight: 700;
-            color: #333;
-            letter-spacing: 0.5px;
-            line-height: 1.15;
-        }
-        .school-address {
-            font-size: 10.5px;
-            color: #555;
-            margin-top: 2px;
-        }
-        .sheet-title {
-            font-size: 12.5px;
-            font-weight: 700;
-            color: #333;
-            margin-top: 4px;
-            text-transform: uppercase;
-        }
-        .academic-year {
-            font-size: 10.5px;
-            color: #555;
-            margin-top: 2px;
-        }
-        .grade-table {
-            border-collapse: collapse;
-            font-size: 9px;
-            width: 130px;
-            float: right;
-        }
-        .grade-table th {
-            background: #333;
-            color: #fff;
-            padding: 2px 4px;
-            text-align: center;
-            font-weight: 600;
-            border: 1px solid #333;
-        }
-        .grade-table td {
-            border: 1px solid #333;
-            padding: 1.5px 4px;
-            text-align: center;
-            font-size: 8.5px;
-        }
-        .info-col-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        .info-col-table td {
-            padding: 2.5px 1px;
-            font-size: 10px;
-            vertical-align: baseline;
-        }
-        .info-label {
-            width: 95px;
-            font-weight: 600;
-            color: #333;
-        }
-        .info-value {
-            border-bottom: 1px solid #333;
-        }
-        
-        .table-transcript-grid {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 8px;
-            margin-bottom: 8px;
-        }
-        .table-transcript-grid th, .table-transcript-grid td {
-            border: 1px solid #000;
-            padding: 3px 2px;
-            text-align: center;
-            font-size: 9px;
-            vertical-align: middle;
-            line-height: 1.15;
-        }
-        .table-transcript-grid th {
-            background: #f2f2f2;
-            font-weight: bold;
-            font-size: 8.5px;
-        }
-        .table-transcript-grid .subject-name {
-            text-align: left;
-            padding-left: 5px;
-            font-weight: 600;
-            font-size: 9px;
-            white-space: nowrap;
-        }
-        .table-transcript-grid .section-divider-row td {
-            background: #f5f5f5;
-            font-weight: bold;
-            text-align: left;
-            padding-left: 6px;
-            font-size: 9.5px;
-            color: #333;
-            border-top: 1px solid #000;
-            border-bottom: 1px solid #000;
-            padding-top: 2.5px;
-            padding-bottom: 2.5px;
-        }
+    body {
+        font-family: 'SolaimanLipi', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: #fff;
+        color: #000;
+        font-size: 11px;
+        margin: 0;
+        padding: 0;
+    }
+    .mark-sheet {
+        width: 100%;
+        height: 287mm; /* 🌟 Forces portrait A4 height */
+        background: #fff;
+        border: 3px solid #e6c84b;
+        padding: 8px;
+        box-sizing: border-box;
+        display: flex; /* 🌟 Enables flex layout */
+        flex-direction: column; 
+    }
+    .inner-border {
+        border: 1.5px solid #e6c84b;
+        padding: 10px;
+        flex: 1; /* 🌟 Stretches to fill the outer border */
+        display: flex;
+        flex-direction: column; /* 🌟 Allows elements inside to be pushed down */
+    }
+    .layout-table {
+        width: 100%;
+        border-collapse: collapse;
+        border: none !important;
+    }
+    .layout-table td {
+        border: none !important;
+        padding: 0;
+        vertical-align: top;
+    }
+    .school-info {
+        text-align: center;
+        padding: 0 6px;
+    }
+    .school-logo {
+        width: 48px;
+        height: 48px;
+        object-fit: contain;
+        margin: 0 auto 3px auto;
+        display: block;
+    }
+    .school-logo-fallback {
+        width: 40px;
+        height: 40px;
+        margin: 0 auto 3px auto;
+        background: #4CAF50;
+        border-radius: 50%;
+        text-align: center;
+        line-height: 36px;
+        color: #fff;
+        font-weight: bold;
+        font-size: 20px;
+        border: 1.5px solid #e6c84b;
+    }
+    .school-name {
+        font-size: 18px;
+        font-weight: 700;
+        color: #333;
+        letter-spacing: 0.5px;
+        line-height: 1.15;
+    }
+    .school-address {
+        font-size: 10.5px;
+        color: #555;
+        margin-top: 2px;
+    }
+    .sheet-title {
+        font-size: 12.5px;
+        font-weight: 700;
+        color: #333;
+        margin-top: 4px;
+        text-transform: uppercase;
+    }
+    .academic-year {
+        font-size: 10.5px;
+        color: #555;
+        margin-top: 2px;
+    }
+    .grade-table {
+        border-collapse: collapse;
+        font-size: 9px;
+        width: 130px;
+        float: right;
+    }
+    .grade-table th {
+        background: #333;
+        color: #fff;
+        padding: 2px 4px;
+        text-align: center;
+        font-weight: 600;
+        border: 1px solid #333;
+    }
+    .grade-table td {
+        border: 1px solid #333;
+        padding: 1.5px 4px;
+        text-align: center;
+        font-size: 8.5px;
+    }
+    .info-col-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .info-col-table td {
+        padding: 2.5px 1px;
+        font-size: 10px;
+        vertical-align: baseline;
+    }
+    .info-label {
+        width: 95px;
+        font-weight: 600;
+        color: #333;
+    }
+    .info-value {
+        border-bottom: 1px solid #333;
+    }
+    
+    .table-transcript-grid {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 8px;
+        margin-bottom: 8px;
+    }
+    .table-transcript-grid th, .table-transcript-grid td {
+        border: 1px solid #000;
+        padding: 3px 2px;
+        text-align: center;
+        font-size: 9px;
+        vertical-align: middle;
+        line-height: 1.15;
+    }
+    .table-transcript-grid th {
+        background: #f2f2f2;
+        font-weight: bold;
+        font-size: 8.5px;
+    }
+    .table-transcript-grid .subject-name {
+        text-align: left;
+        padding-left: 5px;
+        font-weight: 600;
+        font-size: 9px;
+        white-space: nowrap;
+    }
+    .table-transcript-grid .section-divider-row td {
+        background: #f5f5f5;
+        font-weight: bold;
+        text-align: left;
+        padding-left: 6px;
+        font-size: 9.5px;
+        color: #333;
+        border-top: 1px solid #000;
+        border-bottom: 1px solid #000;
+        padding-top: 2.5px;
+        padding-bottom: 2.5px;
+    }
 
-        .table-transcript-grid .grand-total-row td {
-            background: #e2e8f0 !important;
-            font-weight: 800 !important;
-            font-size: 10px !important;
-            border-top: 2px solid #000 !important;
-            border-bottom: 2px solid #000 !important;
-            padding: 4px 2px !important;
-        }
+    .table-transcript-grid .grand-total-row td {
+        background: #e2e8f0 !important;
+        font-weight: 800 !important;
+        font-size: 10px !important;
+        border-top: 2px solid #000 !important;
+        border-bottom: 2px solid #000 !important;
+        padding: 4px 2px !important;
+    }
 
-        .right-side-merged-cell {
-            font-size: 11.5px;
-            font-weight: bold;
-            vertical-align: middle;
-            background: #fff;
-        }
-        .summary-block-matrix {
-            width: 100%;
-            border-collapse: collapse;
-            table-layout: fixed;
-        }
-        .summary-block-matrix td {
-            border: 1px solid #333 !important;
-            padding: 3.5px 6px;
-            font-size: 9.5px;
-        }
-        .summary-lbl {
-            background: #f5f5f5;
-            font-weight: bold;
-            width: 120px;
-        }
+    .right-side-merged-cell {
+        font-size: 11.5px;
+        font-weight: bold;
+        vertical-align: middle;
+        background: #fff;
+    }
+    .summary-block-matrix {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+    }
+    .summary-block-matrix td {
+        border: 1px solid #333 !important;
+        padding: 3.5px 6px;
+        font-size: 9.5px;
+    }
+    .summary-lbl {
+        background: #f5f5f5;
+        font-weight: bold;
+        width: 120px;
+    }
 
-        .eval-matrix-table {
-            width: 100%;
-            border-collapse: collapse;
-            table-layout: fixed;
-        }
-        .eval-matrix-table th {
-            background: #f5f5f5;
-            border: 1px solid #333;
-            padding: 3px;
-            font-size: 9.5px;
-            font-weight: bold;
-            text-align: center;
-        }
-        .eval-matrix-table td {
-            border: 1px solid #333;
-            padding: 2.5px 5px;
-            font-size: 9px;
-        }
-        .eval-checkbox {
-            width: 22px;
-            text-align: center;
-            font-weight: bold;
-        }
+    .eval-matrix-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+    }
+    .eval-matrix-table th {
+        background: #f5f5f5;
+        border: 1px solid #333;
+        padding: 3px;
+        font-size: 9.5px;
+        font-weight: bold;
+        text-align: center;
+    }
+    .eval-matrix-table td {
+        border: 1px solid #333;
+        padding: 2.5px 5px;
+        font-size: 9px;
+    }
+    .eval-checkbox {
+        width: 22px;
+        text-align: center;
+        font-weight: bold;
+    }
 
-        .comments-box {
-            border: 1px solid #333;
-            padding: 6px;
-            font-size: 9.5px;
-            min-height: 48px;
-            margin-top: 8px;
-            width: 100%;
-            box-sizing: border-box;
-        }
-        .signatures-table {
-            width: 100%;
-            margin-top: 45px;
-            border-collapse: collapse;
-        }
-        .signatures-table td {
-            text-align: center;
-            font-size: 9.5px;
-            color: #333;
-            font-weight: 600;
-            width: 33.33%;
-            vertical-align: top;
-        }
-        .signature-line {
-            border-top: 1px solid #333;
-            width: 150px;
-            margin: 0 auto;
-            padding-top: 3px;
-        }
-        .footer-table {
-            width: 100%;
-            margin-top: 12px;
-            border-top: 1px solid #ddd;
-            padding-top: 3px;
-            font-size: 8.5px;
-            color: #666;
-        }
-        .highlight-green { color: #2e7d32; font-weight: 700; }
-        .highlight-blue { color: #1565c0; font-weight: 700; }
-        .highlight-teal { color: #00897b; font-weight: 700; }
-        .grade-f { color: #dc2626; font-weight: bold; }
+    .comments-box {
+        border: 1px solid #333;
+        padding: 6px;
+        font-size: 9.5px;
+        min-height: 48px;
+        margin-top: 8px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    .signatures-table {
+        width: 100%;
+        margin-top: auto; /* 🌟 Pushes the signatures exactly to the bottom */
+        border-collapse: collapse;
+    }
+    .signatures-table td {
+        text-align: center;
+        font-size: 9.5px;
+        color: #333;
+        font-weight: 600;
+        width: 33.33%;
+        vertical-align: top;
+    }
+    .signature-line {
+        border-top: 1px solid #333;
+        width: 150px;
+        margin: 0 auto;
+        padding-top: 3px;
+    }
+    .footer-table {
+        width: 100%;
+        margin-top: 12px;
+        border-top: 1px solid #ddd;
+        padding-top: 3px;
+        font-size: 8.5px;
+        color: #666;
+    }
+    .highlight-green { color: #2e7d32; font-weight: 700; }
+    .highlight-blue { color: #1565c0; font-weight: 700; }
+    .highlight-teal { color: #00897b; font-weight: 700; }
+    .grade-f { color: #dc2626; font-weight: bold; }
 
-        .qr-code-wrapper {
-            border: 1px solid #333;
-            padding: 2px;
-            background: #fff;
-            display: inline-block;
-            text-align: center;
+    .qr-code-wrapper {
+        border: 1px solid #333;
+        padding: 2px;
+        background: #fff;
+        display: inline-block;
+        text-align: center;
+    }
+    .qr-code-img {
+        width: 78px;
+        height: 78px;
+        display: block;
+        margin: 0 auto;
+    }
+
+    /* Force borders on the Grade Range and Evaluation tables */
+    .grade-table, .grade-range, .eval-matrix-table, .info-table {
+        border-collapse: collapse !important;
+    }
+
+    .grade-table th, .grade-table td,
+    .grade-range th, .grade-range td,
+    .eval-matrix-table th, .eval-matrix-table td,
+    .info-table th, .info-table td {
+        border: 1px solid #333 !important;
+    }
+
+    @media print {
+        @page { 
+            size: A4 portrait;
+            margin: 5mm; 
         }
-        .qr-code-img {
-            width: 78px;
-            height: 78px;
-            display: block;
-            margin: 0 auto;
+        * { 
+            -webkit-print-color-adjust: exact !important; 
+            print-color-adjust: exact !important; 
         }
-    </style>
+        body { margin: 0; }
+    }
+</style>
 </head>
 <body>
 
@@ -869,6 +899,13 @@
 
   </div>
 </div>
-
+<!-- Put this at the very bottom of pdf/marksheet.blade.php -->
+@if(!isset($is_batch))
+    <script>
+      window.onload = function() {
+        window.print();
+      };
+    </script>
+@endif
 </body>
 </html>

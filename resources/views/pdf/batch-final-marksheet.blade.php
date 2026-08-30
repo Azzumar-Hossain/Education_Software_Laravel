@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Batch Marksheets</title>
+    <title>Batch Final Cumulative Marksheets</title>
     <style>
         body { margin: 0; padding: 0; background: #fff; }
         
@@ -21,29 +21,23 @@
 <body>
 
     @if($enrollments->isEmpty())
-        <h2 style="padding: 20px; font-family: sans-serif; color: red;">
-            Error: No students were found for this Year, Class, and Section.
-        </h2>
+        <h2 style="padding: 20px; font-family: sans-serif; color: red;">Error: No students found.</h2>
     @endif
 
     @foreach($enrollments as $enrollment)
         <div class="page-break">
-            <!-- 🌟 Correctly injects your standard Term Marksheet -->
-            @include('pdf.marksheet', [
+            <!-- 🌟 This calls your Landscape Final Marksheet 🌟 -->
+            @include('pdf.final-marksheet', [
                 'enrollment' => $enrollment,
-                'exam'       => $exam,
-                'marks'      => $allMarks->where('student_id', $enrollment->user_id),
+                'allMarks'   => $allMarks->where('student_id', $enrollment->user_id),
                 'is_batch'   => true 
             ])
         </div>
     @endforeach
 
-    <!-- Delay to allow all tables to render before printing -->
     <script>
         window.onload = function() {
-            setTimeout(function() {
-                window.print();
-            }, 1500); 
+            setTimeout(function() { window.print(); }, 1500); 
         };
     </script>
 </body>

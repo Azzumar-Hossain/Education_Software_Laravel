@@ -4,11 +4,8 @@ namespace App\Filament\Resources\EnrollmentResource\Pages;
 
 use App\Filament\Resources\EnrollmentResource;
 use App\Models\Enrollment;
-use App\Models\Exam;
-use App\Models\Mark;
 use Filament\Resources\Pages\Page;
 use Illuminate\Contracts\Support\Htmlable;
-use Mccarlosen\LaravelMpdf\Facades\LaravelMpdf as Pdf;
 use Filament\Notifications\Notification;
 
 class StudentMarks extends Page
@@ -23,63 +20,32 @@ class StudentMarks extends Page
         $this->record = $record;
     }
 
-    // --- UPDATED: Appended the Student ID to the Web Page Title! ---
     public function getTitle(): string | Htmlable
     {
         $studentId = $this->record->user->student_id ?? 'N/A';
         return "Marksheet: " . $this->record->user->name . " (ID: " . $studentId . ")";
     }
 
-    // Handles printing an individual term
     public function printPdf($examId)
     {
-        $exam = Exam::find($examId);
-        $marks = Mark::with('subject')
-            ->where('student_id', $this->record->user_id)
-            ->where('academic_year_id', $this->record->academic_year_id)
-            ->where('school_class_id', $this->record->school_class_id)
-            ->where('exam_id', $examId)
-            ->get();
-
-        if ($marks->isEmpty()) {
-            Notification::make()->title('No Marks Found')->warning()->send();
-            return;
-        }
-
-        $pdf = Pdf::loadView('pdf.marksheet', [
-            'enrollment' => $this->record,
-            'marks' => $marks,
-            'exam' => $exam,
+        // Generates the URL for the single term marksheet
+        $url = route('print.marksheet', [
+            'enrollment' => $this->record->id,
+            'exam' => $examId
         ]);
 
-        return response()->streamDownload(
-            fn () => print($pdf->output()),
-            "marksheet-{$this->record->roll_number}-{$exam->name}.pdf"
-        );
+        // Tells Filament/Livewire to open this URL in a new tab
+        $this->js("window.open('{$url}', '_blank');");
     }
 
-    // Handles combining all terms into one Final PDF!
     public function printFinalPdf()
     {
-        $allMarks = Mark::with(['subject', 'exam'])
-            ->where('student_id', $this->record->user_id)
-            ->where('academic_year_id', $this->record->academic_year_id)
-            ->where('school_class_id', $this->record->school_class_id)
-            ->get();
-
-        if ($allMarks->isEmpty()) {
-            Notification::make()->title('No Marks Found')->warning()->send();
-            return;
-        }
-
-        $pdf = Pdf::loadView('pdf.final-marksheet', [
-            'enrollment' => $this->record,
-            'allMarks' => $allMarks,
+        // Generates the URL for the final cumulative marksheet
+        $url = route('print.final.marksheet', [
+            'id' => $this->record->id
         ]);
 
-        return response()->streamDownload(
-            fn () => print($pdf->output()),
-            "final-cumulative-marksheet-{$this->record->roll_number}.pdf"
-        );
+        // Tells Filament/Livewire to open this URL in a new tab
+        $this->js("window.open('{$url}', '_blank');");
     }
 }
