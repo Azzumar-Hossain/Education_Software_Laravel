@@ -350,4 +350,28 @@ class FailList extends Page implements HasForms
                 ->send();
         }
     }
+
+    // Add this right before the final closing brace of the FailList class
+    public function printFailList()
+    {
+        if (empty($this->failRecords)) {
+            \Filament\Notifications\Notification::make()
+                ->title('Generate List First')
+                ->warning()
+                ->send();
+            return;
+        }
+
+        $inputs = $this->data;
+
+        $url = route('print.fail.list', [
+            'year'    => $inputs['academic_year_id'],
+            'class'   => $inputs['school_class_id'],
+            'scope'   => $inputs['merit_scope'] ?? 'class',
+            'section' => $inputs['section_id'] ?? null,
+            'group'   => $inputs['study_group'] ?? null,
+        ]);
+
+        $this->js("window.open('{$url}', '_blank');");
+    }
 }
