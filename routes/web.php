@@ -553,3 +553,190 @@ Route::get('/print/notice-sheet', function (\Illuminate\Http\Request $request) {
 
     return view('pdf.notice-sheet', compact('studentResults', 'subjects', 'schoolClass', 'exam', 'academicYear', 'groupName'));
 })->name('print.notice.sheet');
+
+// 🌟 Native Browser Print Route for Tabulation Sheet
+Route::get('/print/tabulation-sheet', function (\Illuminate\Http\Request $request) {
+    $yearId = $request->query('year');
+    $classId = $request->query('class');
+    $examId = $request->query('exam');
+    $sectionId = $request->query('section');
+    $groupName = $request->query('group');
+    $rowsPerPage = (int) $request->query('rows_per_page', 7);
+
+    $user = auth()->user();
+    $schoolClass = \App\Models\SchoolClass::find($classId);
+    $exam = \App\Models\Exam::find($examId);
+    $academicYear = \App\Models\AcademicYear::find($yearId);
+
+    // 1. Fetch Subjects
+    $boardSubjectOrder = ['101', '102', '107', '108', '109', '127', '150', '111', '112', '154', '153', '140', '110', '126', '136', '137', '138', '134'];
+    
+    $subjectQuery = \App\Models\Subject::whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $classId))
+        ->where(function($query) use ($groupName) {
+            $query->whereNull('study_group_id')
+                  ->when($groupName, function($q) use ($groupName) {
+                      $resolvedId = \App\Models\StudyGroup::where('name', $groupName)->first()?->id;
+                      if($resolvedId) $q->orWhere('study_group_id', $resolvedId);
+                  });
+        });
+
+    if (strtolower($groupName) === 'science') {
+        $subjectQuery->where('code', '!=', '127')->where('name', 'not like', '%General Science%')->where('name', 'not like', '%সাধারণ বিজ্ঞান%');
+    }
+    if (in_array(strtolower($groupName), ['arts/humanities', 'arts', 'humanities', 'commerce'])) {
+        $subjectQuery->whereNotIn('code', ['136', '137', '138']);
+    }
+
+    $subjects = $subjectQuery->get()->sortBy(function($sub) use ($boardSubjectOrder) {
+        $idx = array_search((string) ($sub->code ?? ''), $boardSubjectOrder);
+        return $idx !== false ? $idx : 999;
+    })->values();
+
+    // 2. Fetch Enrollments
+    $query = \App\Models\Enrollment::with(['user', 'schoolClass', 'section'])
+        ->where('school_class_id', $classId)
+        ->where('academic_year_id', $yearId)
+        ->when($groupName, fn($q, $g) => $q->where('study_group', $g));
+
+    if (!empty($sectionId)) {
+        $query->where('section_id', $sectionId);
+    } elseif ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
+        $assignedSectionIds = \App\Models\ClassTeacher::where('teacher_id', $user->id)->pluck('section_id')->unique()->filter();
+        if ($assignedSectionIds->isNotEmpty()) $query->whereIn('section_id', $assignedSectionIds);
+    }
+
+    $enrollments = $query->get();
+    $studentResults = [];
+
+    // 3. Process All Grading Logic
+    foreach ($enrollments as $enrollment) {
+        $allMarks = \App\Models\Mark::with('subject')
+            ->where('student_id', $enrollment->user_id)
+            ->where('academic_year_id', $yearId)
+            ->where('school_class_id', $classId)
+            ->where('exam_id', $examId)
+            ->get();
+
+        $filteredMarks = $allMarks->filter(function($mark) use ($groupName) {
+            if (!$mark->subject) return false;
+            $subCode = (string) $mark->subject->code;
+            $subName = strtolower($mark->subject->name);
+            if (strtolower($groupName) === 'science' && ($subCode === '127' || str_contains($subName, 'general science') || str_contains($subName, 'সাধারণ বিজ্ঞান'))) return false;
+            if (in_array(strtolower($groupName), ['arts/humanities', 'arts', 'humanities', 'commerce']) && in_array($subCode, ['136', '137', '138'])) return false;
+            return true;
+        })->values();
+
+        $coreObtainedSum = 0.0; $coreGPAs = []; $failedSubjectsCount = 0;
+        $optionalBonusMarks = 0.0; $optionalBonusPoints = 0.00;
+        $processedIds = [];
+
+        foreach ($filteredMarks as $mark) {
+            if (in_array($mark->id, $processedIds)) continue;
+
+            $partnerMark = $mark->subject->linked_subject_id 
+                ? $filteredMarks->firstWhere('subject_id', $mark->subject->linked_subject_id) 
+                : $filteredMarks->where('subject.linked_subject_id', $mark->subject_id)->first();
+
+            if ($partnerMark && !$mark->subject->linked_subject_id) {
+                $temp = $mark; $mark = $partnerMark; $partnerMark = $temp;
+            }
+
+            $subName = strtolower($mark->subject->name ?? '');
+            $subType = strtolower($mark->subject->subject_type ?? $mark->subject->type ?? '');
+            $isOptional = (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional' || (int) $enrollment->optional_subject_id === (int) $mark->subject_id);
+
+            if ($partnerMark) {
+                $rules1 = $mark->subject->getMarksForExam($examId);
+                $rules2 = $partnerMark->subject->getMarksForExam($examId);
+                
+                $overallPassOnly = ($rules1['overall_pass_only'] ?? $mark->subject->overall_pass_only ?? false) || ($rules2['overall_pass_only'] ?? $partnerMark->subject->overall_pass_only ?? false);
+
+                $opm1 = $rules1['overall_pass_mark'] ?? $mark->subject->overall_pass_mark ?? 33;
+                $opm2 = $rules2['overall_pass_mark'] ?? $partnerMark->subject->overall_pass_mark ?? 33;
+                
+                $pass1 = $rules1['written_pass_mark'] ?? $mark->subject->written_pass_mark ?? 33;
+                $pass2 = $rules2['written_pass_mark'] ?? $partnerMark->subject->written_pass_mark ?? 33;
+
+                $mcq1Pass = $rules1['mcq_pass_mark'] ?? $mark->subject->mcq_pass_mark ?? 0;
+                $mcq2Pass = $rules2['mcq_pass_mark'] ?? $partnerMark->subject->mcq_pass_mark ?? 0;
+                
+                $combinedObt = $mark->marks_obtained + $partnerMark->marks_obtained;
+                $combinedMax = ($rules1['full_marks'] ?? 100) + ($rules2['full_marks'] ?? 100);
+                $perc = $combinedMax > 0 ? ($combinedObt / $combinedMax) * 100 : 0;
+
+                if ($overallPassOnly) {
+                    $isComponentFailed = ($combinedObt < ($opm1 + $opm2));
+                } else {
+                    $combinedMcqObt = ($mark->mcq_mark ?? 0) + ($partnerMark->mcq_mark ?? 0);
+                    $mcqFail = (($mcq1Pass + $mcq2Pass) > 0) && ($combinedMcqObt < ($mcq1Pass + $mcq2Pass));
+                    $isComponentFailed = ($combinedObt < ($pass1 + $pass2)) || $mcqFail;
+                }
+
+                $gp = \App\Models\GradeScale::getGradeForMark($perc, $isComponentFailed)['point'];
+
+                if ($isOptional) {
+                    if ($combinedObt > 40.0) $optionalBonusMarks = $combinedObt - 40.0;
+                    if ($gp > 2.00) $optionalBonusPoints = $gp - 2.00;
+                } else {
+                    $coreObtainedSum += $combinedObt;
+                    $coreGPAs[] = $gp;
+                    if ($isComponentFailed) $failedSubjectsCount++;
+                }
+
+                array_push($processedIds, $mark->id, $partnerMark->id);
+            } else {
+                $obt = (float) $mark->marks_obtained;
+                $gp  = (float) $mark->gpa;
+
+                if ($isOptional) {
+                    if ($obt > 40.0) $optionalBonusMarks = $obt - 40.0;
+                    if ($gp > 2.00) $optionalBonusPoints = $gp - 2.00;
+                } else {
+                    $coreObtainedSum += $obt;
+                    $coreGPAs[] = $gp;
+                    if (trim($mark->grade) === 'F') $failedSubjectsCount++;
+                }
+                $processedIds[] = $mark->id;
+            }
+        }
+
+        $grandTotalMarks = $coreObtainedSum + $optionalBonusMarks;
+        $coreCount = count($coreGPAs);
+        $hasCoreFail = ($failedSubjectsCount > 0);
+
+        if ($hasCoreFail || $coreCount === 0) {
+            $finalGPA = '0.00'; $finalGrade = 'F';
+        } else {
+            $calcGpa = min(5.00, (array_sum($coreGPAs) + $optionalBonusPoints) / $coreCount);
+            $finalGPA = number_format($calcGpa, 2);
+            $finalGrade = match(true) { $calcGpa >= 5.00 => 'A+', $calcGpa >= 4.00 => 'A', $calcGpa >= 3.50 => 'A-', $calcGpa >= 3.00 => 'B', $calcGpa >= 2.00 => 'C', $calcGpa >= 1.00 => 'D', default => 'F' };
+        }
+
+        $studentResults[] = [
+            'enrollment'    => $enrollment,
+            'marks'         => $allMarks->keyBy('subject_id'),
+            'grand_total'   => $grandTotalMarks,
+            'gpa'           => $finalGPA,
+            'grade'         => $finalGrade,
+            'has_core_fail' => $hasCoreFail,
+            'fail_count'    => $failedSubjectsCount,
+        ];
+    }
+
+    // 4. Sort and Apply Ranks
+    usort($studentResults, function ($a, $b) {
+        if ($a['has_core_fail'] !== $b['has_core_fail']) return $a['has_core_fail'] <=> $b['has_core_fail'];
+        if (!$a['has_core_fail']) {
+            if ((float)$b['grand_total'] != (float)$a['grand_total']) return (float)$b['grand_total'] <=> (float)$a['grand_total'];
+            return (float)$b['gpa'] <=> (float)$a['gpa'];
+        }
+        if ($a['fail_count'] !== $b['fail_count']) return $a['fail_count'] <=> $b['fail_count'];
+        return (float)$b['grand_total'] <=> (float)$a['grand_total'];
+    });
+
+    foreach ($studentResults as $index => &$res) {
+        $res['position'] = $index + 1; // Array is now strictly sorted by exact rules
+    }
+
+    return view('pdf.tabulation-sheet', compact('studentResults', 'subjects', 'schoolClass', 'exam', 'academicYear', 'groupName', 'rowsPerPage'));
+})->name('print.tabulation.sheet');

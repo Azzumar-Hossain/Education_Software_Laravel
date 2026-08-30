@@ -389,4 +389,29 @@ class TabulationSheet extends Page implements HasForms
 
         $this->students = $studentResults;
     }
+
+    // Add this right before the final closing brace of the TabulationSheet class
+    public function printTabulationSheet()
+    {
+        if (empty($this->students)) {
+            \Filament\Notifications\Notification::make()
+                ->title('Generate Ledger First')
+                ->warning()
+                ->send();
+            return;
+        }
+
+        $inputs = $this->data;
+
+        $url = route('print.tabulation.sheet', [
+            'year'          => $inputs['academic_year_id'],
+            'class'         => $inputs['school_class_id'],
+            'exam'          => $inputs['exam_id'],
+            'section'       => $inputs['section_id'] ?? null,
+            'group'         => $inputs['study_group'] ?? null,
+            'rows_per_page' => $inputs['rows_per_page'] ?? 7,
+        ]);
+
+        $this->js("window.open('{$url}', '_blank');");
+    }
 }
