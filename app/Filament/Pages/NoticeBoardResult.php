@@ -285,4 +285,28 @@ class NoticeBoardResult extends Page implements HasForms
 
         $this->students = $studentResults;
     }
+
+    // Add this right before the final closing brace of the NoticeBoardResult class
+    public function printNoticeSheet()
+    {
+        if (empty($this->students)) {
+            \Filament\Notifications\Notification::make()
+                ->title('Generate Sheet First')
+                ->warning()
+                ->send();
+            return;
+        }
+
+        $inputs = $this->data;
+
+        $url = route('print.notice.sheet', [
+            'year'    => $inputs['academic_year_id'],
+            'class'   => $inputs['school_class_id'],
+            'exam'    => $inputs['exam_id'],
+            'section' => $inputs['section_id'] ?? null,
+            'group'   => $inputs['study_group'] ?? null,
+        ]);
+
+        $this->js("window.open('{$url}', '_blank');");
+    }
 }

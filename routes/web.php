@@ -428,3 +428,128 @@ Route::get('/print/exam-routine', function (\Illuminate\Http\Request $request) {
 
     return view('pdf.exam-routine', compact('routines', 'schoolClass', 'exam', 'academicYear', 'schoolLogo', 'schoolName'));
 })->name('print.exam.routine');
+
+// 🌟 Native Browser Print Route for Notice Board Sheet
+Route::get('/print/notice-sheet', function (\Illuminate\Http\Request $request) {
+    $yearId = $request->query('year');
+    $classId = $request->query('class');
+    $examId = $request->query('exam');
+    $sectionId = $request->query('section');
+    $groupName = $request->query('group');
+
+    $user = auth()->user();
+    $schoolClass = \App\Models\SchoolClass::find($classId);
+    $exam = \App\Models\Exam::find($examId);
+    $academicYear = \App\Models\AcademicYear::find($yearId);
+
+    // 1. Fetch Subjects (Exact same logic as component)
+    $boardSubjectOrder = ['101', '102', '107', '108', '109', '127', '150', '111', '112', '154', '153', '140', '110', '126', '136', '137', '138', '134'];
+    
+    $subjectQuery = \App\Models\Subject::whereHas('schoolClasses', fn($q) => $q->where('school_classes.id', $classId))
+        ->where(function($query) use ($groupName) {
+            $query->whereNull('study_group_id')
+                  ->when($groupName, function($q) use ($groupName) {
+                      $resolvedId = \App\Models\StudyGroup::where('name', $groupName)->first()?->id;
+                      if($resolvedId) $q->orWhere('study_group_id', $resolvedId);
+                  });
+        });
+
+    if (strtolower($groupName) === 'science') {
+        $subjectQuery->where('code', '!=', '127')->where('name', 'not like', '%General Science%')->where('name', 'not like', '%সাধারণ বিজ্ঞান%');
+    }
+    if (in_array(strtolower($groupName), ['arts/humanities', 'arts', 'humanities', 'commerce'])) {
+        $subjectQuery->whereNotIn('code', ['136', '137', '138']);
+    }
+
+    $subjects = $subjectQuery->get()->sortBy(function($sub) use ($boardSubjectOrder) {
+        $idx = array_search((string) ($sub->code ?? ''), $boardSubjectOrder);
+        return $idx !== false ? $idx : 999;
+    })->values();
+
+    // 2. Fetch Enrollments
+    $query = \App\Models\Enrollment::with(['user', 'schoolClass', 'section'])
+        ->where('school_class_id', $classId)
+        ->where('academic_year_id', $yearId)
+        ->when($groupName, fn($q, $g) => $q->where('study_group', $g));
+
+    if (!empty($sectionId)) {
+        $query->where('section_id', $sectionId);
+    } elseif ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
+        $assignedSectionIds = \App\Models\ClassTeacher::where('teacher_id', $user->id)->pluck('section_id')->unique()->filter();
+        if ($assignedSectionIds->isNotEmpty()) $query->whereIn('section_id', $assignedSectionIds);
+    }
+    
+    $enrollments = $query->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')->get();
+    $studentResults = [];
+
+    // 3. Process Marks
+    foreach ($enrollments as $enrollment) {
+        $marks = \App\Models\Mark::with('subject')
+            ->where('student_id', $enrollment->user_id)
+            ->where('academic_year_id', $yearId)
+            ->where('school_class_id', $classId)
+            ->where('exam_id', $examId)
+            ->get();
+
+        $coreObtainedSum = 0.0; $coreGPAs = []; $hasCoreFail = false;
+        $optionalBonusMarks = 0.0; $optionalBonusPoints = 0.00;
+
+        foreach ($marks as $mark) {
+            if (!$mark->subject) continue;
+            $subName = strtolower($mark->subject->name ?? '');
+            $subType = strtolower($mark->subject->subject_type ?? $mark->subject->type ?? '');
+            $isOptional = (str_contains($subName, 'higher mathematics') || str_contains($subName, 'agriculture') || $subType === 'optional');
+
+            $obt = (float) $mark->marks_obtained;
+            $gp  = (float) $mark->gpa;
+
+            if ($isOptional) {
+                if ($obt > 40.0) $optionalBonusMarks = $obt - 40.0;
+                if ($gp > 2.00) $optionalBonusPoints = $gp - 2.00;
+            } else {
+                $coreObtainedSum += $obt;
+                if (trim($mark->grade) === 'F') $hasCoreFail = true;
+                $coreGPAs[] = $gp;
+            }
+        }
+
+        $grandTotalMarks = $coreObtainedSum + $optionalBonusMarks;
+        $coreCount = count($coreGPAs);
+        
+        if ($hasCoreFail || $coreCount === 0) {
+            $finalGPA = '0.00'; $finalGrade = 'F';
+        } else {
+            $calcGpa = min(5.00, (array_sum($coreGPAs) + $optionalBonusPoints) / $coreCount);
+            $finalGPA = number_format($calcGpa, 2);
+            $finalGrade = match(true) { $calcGpa >= 5.00 => 'A+', $calcGpa >= 4.00 => 'A', $calcGpa >= 3.50 => 'A-', $calcGpa >= 3.00 => 'B', $calcGpa >= 2.00 => 'C', $calcGpa >= 1.00 => 'D', default => 'F' };
+        }
+
+        $studentResults[] = [
+            'enrollment'    => $enrollment,
+            'marks'         => $marks->keyBy('subject_id'),
+            'grand_total'   => $grandTotalMarks,
+            'gpa'           => $finalGPA,
+            'grade'         => $finalGrade,
+            'has_core_fail' => $hasCoreFail,
+        ];
+    }
+
+    // 4. Rank Sorting
+    $rankedList = $studentResults;
+    usort($rankedList, function($a, $b) {
+        if ($a['has_core_fail'] !== $b['has_core_fail']) return $a['has_core_fail'] ? 1 : -1;
+        if ((float)$a['gpa'] != (float)$b['gpa']) return (float)$b['gpa'] <=> (float)$a['gpa'];
+        return (float)$b['grand_total'] <=> (float)$a['grand_total'];
+    });
+
+    foreach ($studentResults as &$res) {
+        if ($res['has_core_fail']) {
+            $res['position'] = 'Fail';
+        } else {
+            $foundIndex = array_search($res['enrollment']->id, array_column(array_column($rankedList, 'enrollment'), 'id'));
+            $res['position'] = ($foundIndex !== false) ? ($foundIndex + 1) : '--';
+        }
+    }
+
+    return view('pdf.notice-sheet', compact('studentResults', 'subjects', 'schoolClass', 'exam', 'academicYear', 'groupName'));
+})->name('print.notice.sheet');
