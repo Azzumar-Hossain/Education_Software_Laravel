@@ -740,3 +740,65 @@ Route::get('/print/tabulation-sheet', function (\Illuminate\Http\Request $reques
 
     return view('pdf.tabulation-sheet', compact('studentResults', 'subjects', 'schoolClass', 'exam', 'academicYear', 'groupName', 'rowsPerPage'));
 })->name('print.tabulation.sheet');
+
+// 🌟 Native Browser Print Route for Admit Cards
+Route::get('/print/admit-cards', function (\Illuminate\Http\Request $request) {
+    $yearId = $request->query('year');
+    $classId = $request->query('class');
+    $examId = $request->query('exam');
+    $sectionId = $request->query('section');
+    $includeRoutine = filter_var($request->query('include_routine', false), FILTER_VALIDATE_BOOLEAN);
+
+    $user = auth()->user();
+    
+    // 1. Fetch Students
+    $query = \App\Models\Enrollment::with(['user', 'schoolClass', 'section'])
+        ->where('school_class_id', $classId)
+        ->where('academic_year_id', $yearId);
+
+    if ($user && ($user->type === 'class_teacher' || $user->hasRole('class_teacher'))) {
+        $assignedSectionIds = \App\Models\ClassTeacher::where('teacher_id', $user->id)->pluck('section_id')->unique()->filter();
+        if ($sectionId) {
+            $query->where('section_id', $sectionId);
+        } else {
+            $query->whereIn('section_id', $assignedSectionIds);
+        }
+    } else {
+        if ($sectionId) $query->where('section_id', $sectionId);
+    }
+
+    $enrollments = $query->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')->get();
+
+    if ($enrollments->isEmpty()) {
+        return "No students found for this selection.";
+    }
+
+    // 2. Fetch Routine (if toggled)
+    $routines = [];
+    if ($includeRoutine) {
+        $routines = \App\Models\ExamRoutine::with('subject')
+            ->where('academic_year_id', $yearId)
+            ->where('school_class_id', $classId)
+            ->where('exam_id', $examId)
+            ->orderBy('exam_date', 'asc')
+            ->orderBy('start_time', 'asc')
+            ->get();
+    }
+
+    // 3. Fetch Header Data
+    $exam = \App\Models\Exam::find($examId);
+    $academicYear = \App\Models\AcademicYear::find($yearId);
+    
+    $schoolLogo = asset('images/logo.png');
+    $schoolName = 'Krisnagobindapur High School'; 
+
+    if (class_exists('\App\Models\Setting')) {
+        $setting = \App\Models\Setting::first();
+        if ($setting) {
+            $schoolLogo = $setting->logo ? asset('storage/' . $setting->logo) : $schoolLogo;
+            $schoolName = $setting->site_name ?? $schoolName;
+        }
+    }
+
+    return view('pdf.admit-cards', compact('enrollments', 'routines', 'includeRoutine', 'exam', 'academicYear', 'schoolLogo', 'schoolName'));
+})->name('print.admit.cards');

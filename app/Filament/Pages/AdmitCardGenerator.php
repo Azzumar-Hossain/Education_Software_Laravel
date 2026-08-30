@@ -61,14 +61,19 @@ class AdmitCardGenerator extends Page implements HasForms
             'include_routine' => false, // Default toggle to FALSE
         ]);
 
-        // Fetch dynamic school logo and name from Settings or Fallback
+        // Default Fallbacks
+        $this->schoolLogo = asset('images/logo.png');
+        $this->schoolName = 'Krisnagobindapur High School';
+
+        // Fetch dynamic school logo and name from Settings
         if (class_exists('\App\Models\Setting')) {
             $setting = \App\Models\Setting::first();
-            $this->schoolLogo = $setting?->logo ? asset('storage/' . $setting->logo) : asset('images/logo.png');
-            $this->schoolName = $setting?->site_name ?? 'Harimohan Govt. High School';
-        } else {
-            $this->schoolLogo = asset('images/logo.png');
-            $this->schoolName = 'Harimohan Govt. High School';
+            if ($setting) {
+                $this->schoolLogo = $setting->logo ? asset('storage/' . $setting->logo) : $this->schoolLogo;
+                
+                // Checks multiple common column names to ensure it catches your exact database structure
+                $this->schoolName = $setting->school_name ?? $setting->site_name ?? $setting->name ?? $this->schoolName;
+            }
         }
     }
 
@@ -216,5 +221,29 @@ class AdmitCardGenerator extends Page implements HasForms
                 ->danger()
                 ->send();
         }
+    }
+
+    // Add this right before the final closing brace of the AdmitCardGenerator class
+    public function printAdmitCards()
+    {
+        if (empty($this->enrollments)) {
+            \Filament\Notifications\Notification::make()
+                ->title('Generate Cards First')
+                ->warning()
+                ->send();
+            return;
+        }
+
+        $inputs = $this->data;
+
+        $url = route('print.admit.cards', [
+            'year'            => $inputs['academic_year_id'],
+            'class'           => $inputs['school_class_id'],
+            'exam'            => $inputs['exam_id'],
+            'section'         => $inputs['section_id'] ?? null,
+            'include_routine' => $inputs['include_routine'] ?? false,
+        ]);
+
+        $this->js("window.open('{$url}', '_blank');");
     }
 }

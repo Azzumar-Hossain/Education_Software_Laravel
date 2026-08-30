@@ -165,16 +165,13 @@
                             <div class="text-center border-b border-black"
                                 style="display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px; margin-bottom: 10px;">
                                 <div class="flex items-center justify-center gap-2">
-                                    @if ($schoolLogo)
-                                        <img src="{{ $schoolLogo }}"
-                                            class="school-logo-img h-9 w-auto object-contain mx-auto" />
+                                    @if($schoolLogo)
+                                        <img src="{{ $schoolLogo }}" alt="School Logo" style="height: 60px; margin: 0 auto;">
                                     @endif
                                 </div>
 
-                                <h1 class="text-base font-extrabold uppercase tracking-wide leading-tight text-black">
-                                    {{ $schoolName ?? 'Harimohan Govt. High School' }}
-                                </h1>
-
+                                <h2 class="text-base font-extrabold uppercase tracking-wide leading-tight text-black">{{ $schoolName }}</h2>
+                                
                                 <h2 class="text-[11px] font-semibold text-gray-800 uppercase leading-tight">
                                     {{ $examName ?? 'EXAM' }} - {{ $academicYearName ?? '2026' }}
                                 </h2>
