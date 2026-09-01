@@ -20,17 +20,40 @@ use Illuminate\Session\Middleware\StartSession;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 use Filament\Support\Assets\Css;
 use Filament\Navigation\NavigationGroup;
-use App\Filament\Resources\GradeScaleResource; // 🌟 IMPORTED THE GRADE SCALE RESOURCE
+use App\Filament\Resources\GradeScaleResource;
 
 class AdminPanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
     {
+        // 🌟 1. Safely fetch the logo from your Settings table for the Favicon
+        $faviconUrl = null; 
+        
+        try {
+            if (class_exists('\App\Models\SiteSetting')) {
+                $setting = \App\Models\SiteSetting::first();
+                if ($setting && $setting->logo) {
+                    $faviconUrl = asset('storage/' . $setting->logo);
+                }
+            } elseif (class_exists('\App\Models\Setting')) {
+                $setting = \App\Models\Setting::first();
+                if ($setting && $setting->logo) {
+                    $faviconUrl = asset('storage/' . $setting->logo);
+                }
+            }
+        } catch (\Throwable $e) {
+            // This prevents errors if you run migrations on a fresh database
+        }
+
         return $panel
             ->default()
             ->id('admin')
             ->path('admin')
             ->login()
+            
+            // 🌟 2. Injected the Favicon dynamically here!
+            ->favicon($faviconUrl)
+            
             // Using a closure here prevents the view from crashing 
             // the panel boot process if the database isn't ready
             ->brandLogo(fn () => view('filament.logo'))
