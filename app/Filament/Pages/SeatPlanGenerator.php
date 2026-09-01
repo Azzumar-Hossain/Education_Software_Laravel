@@ -65,16 +65,30 @@ class SeatPlanGenerator extends Page implements HasForms
                             Select::make('academic_year_id')
                                 ->label('Academic Year')
                                 ->options(AcademicYear::pluck('name', 'id'))
-                                ->required(),
+                                ->required()
+                                ->live(), // 🌟 Added live() so the Exam dropdown updates instantly when you change the year
 
                             Select::make('exam_id')
                                 ->label('Target Exam')
-                                ->options(function () {
-                                    return \App\Models\Exam::with('academicYear')
-                                        ->get()
+                                ->options(function ($get) {
+                                    $yearId = $get('academic_year_id');
+                                    
+                                    // 🌟 Eager load 'schoolClass' so we can grab the class name
+                                    $query = \App\Models\Exam::with(['academicYear', 'schoolClass']);
+                                    
+                                    // Only show exams for the selected year
+                                    if ($yearId) {
+                                        $query->where('academic_year_id', $yearId);
+                                    }
+
+                                    return $query->get()
                                         ->mapWithKeys(function ($exam) {
                                             $yearName = $exam->academicYear->name ?? 'N/A';
-                                            return [$exam->id => "{$exam->name} ({$yearName})"];
+                                            // Grab the class name, fallback to 'All Classes' if the exam applies to everyone
+                                            $className = $exam->schoolClass->name ?? 'All Classes'; 
+                                            
+                                            // 🌟 Format the label: "Class 09 - Half Yearly Exam (2026)"
+                                            return [$exam->id => "{$className} - {$exam->name} ({$yearName})"];
                                         })
                                         ->toArray();
                                 })
@@ -117,7 +131,7 @@ class SeatPlanGenerator extends Page implements HasForms
                                 ->visible(fn($get) => (int) $get('formation') === 3), 
                         ]),
                     ]),
-            ]);
+            ]); // 🌟 Semicolon properly applied here!
     }
 
     public function processArrangement()
@@ -225,5 +239,29 @@ class SeatPlanGenerator extends Page implements HasForms
                 ->success()
                 ->send();
         }
+    }
+
+    public function printSeatPlan()
+    {
+        if (empty($this->previewSeats)) {
+            \Filament\Notifications\Notification::make()
+                ->title('Generate Seat Plan First')
+                ->warning()
+                ->send();
+            return;
+        }
+
+        $inputs = $this->data;
+
+        $url = route('print.seat.plan', [
+            'year'      => $inputs['academic_year_id'] ?? null,
+            'exam'      => $inputs['exam_id'] ?? null,
+            'formation' => $inputs['formation'] ?? 1,
+            'slot1'     => $inputs['class_slot_1'] ?? null,
+            'slot2'     => $inputs['class_slot_2'] ?? null,
+            'slot3'     => $inputs['class_slot_3'] ?? null,
+        ]);
+
+        $this->js("window.open('{$url}', '_blank');");
     }
 }

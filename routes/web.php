@@ -802,3 +802,98 @@ Route::get('/print/admit-cards', function (\Illuminate\Http\Request $request) {
 
     return view('pdf.admit-cards', compact('enrollments', 'routines', 'includeRoutine', 'exam', 'academicYear', 'schoolLogo', 'schoolName'));
 })->name('print.admit.cards');
+
+// 🌟 Native Browser Print Route for Seat Plan Bench Slips
+Route::get('/print/seat-plan', function (\Illuminate\Http\Request $request) {
+    $yearId = $request->query('year');
+    $examId = $request->query('exam');
+    $formationCount = (int) $request->query('formation', 2);
+    
+    $slotIds = [
+        $request->query('slot1'),
+        $request->query('slot2'),
+        $request->query('slot3')
+    ];
+
+    $slots = [];
+    foreach ($slotIds as $index => $slotId) {
+        if ($slotId && ($index < 2 || $formationCount === 3)) {
+            $slots[] = \App\Models\Enrollment::with('user', 'schoolClass')
+                ->where('school_class_id', $slotId)
+                ->where('academic_year_id', $yearId)
+                ->orderByRaw('CAST(roll_number AS UNSIGNED) ASC')
+                ->get()->toArray();
+        }
+    }
+
+    $maxCount = empty($slots) ? 0 : max(array_map('count', $slots));
+    $benchIndex = 1;
+    $generatedAllocation = [];
+
+    // Weave the students across the benches
+    for ($i = 0; $i < $maxCount; $i++) {
+        $currentBenchCluster = [];
+        $hasDataThisRow = false;
+
+        for ($position = 1; $position <= $formationCount; $position++) {
+            $slotData = $slots[$position - 1][$i] ?? null;
+            if ($slotData) {
+                $hasDataThisRow = true;
+                $currentBenchCluster[] = [
+                    'bench'        => $benchIndex,
+                    'position'     => $position,
+                    'student_name' => $slotData['user']['name'] ?? 'Unknown',
+                    'student_id'   => $slotData['user']['student_id'] ?? '',
+                    'class_name'   => $slotData['school_class']['name'] ?? '',
+                    'roll'         => (int) $slotData['roll_number']
+                ];
+            }
+        }
+
+        if ($hasDataThisRow) {
+            $generatedAllocation[$benchIndex] = $currentBenchCluster;
+            $benchIndex++;
+        }
+    }
+
+    $exam = \App\Models\Exam::find($examId);
+    
+    $schoolLogo = asset('images/logo.png');
+    $schoolName = 'Krisnagobindapur High School'; 
+
+    if (class_exists('\App\Models\Setting')) {
+        $setting = \App\Models\Setting::first();
+        if ($setting) {
+            $schoolLogo = $setting->logo ? asset('storage/' . $setting->logo) : $schoolLogo;
+            $schoolName = $setting->school_name ?? $setting->site_name ?? $setting->name ?? $schoolName;
+        }
+    }
+
+    return view('pdf.seat-plan', compact('generatedAllocation', 'formationCount', 'exam', 'schoolName', 'schoolLogo'));
+})->name('print.seat.plan');
+
+// 🌟 Native Browser Print Route for Testimonials
+Route::get('/print/testimonials', function (\Illuminate\Http\Request $request) {
+    $ids = explode(',', $request->query('ids', ''));
+    $testimonials = \App\Models\Testimonial::whereIn('id', $ids)->get();
+
+    if ($testimonials->isEmpty()) {
+        return "No testimonials selected.";
+    }
+
+    $schoolLogo = asset('images/logo.png');
+    $schoolName = 'Krisnagobindapur High School';
+    $schoolAddress = 'Chapainawabganj Sadar, Chapainawabganj, Bangladesh'; // Default fallback
+
+    if (class_exists('\App\Models\Setting')) {
+        $setting = \App\Models\Setting::first();
+        if ($setting) {
+            $schoolLogo = $setting->logo ? asset('storage/' . $setting->logo) : $schoolLogo;
+            $schoolName = $setting->school_name ?? $setting->site_name ?? $setting->name ?? $schoolName;
+            // Fetches address from settings if it exists
+            $schoolAddress = $setting->school_address ?? $setting->address ?? $schoolAddress; 
+        }
+    }
+
+    return view('pdf.testimonials', compact('testimonials', 'schoolLogo', 'schoolName', 'schoolAddress'));
+})->name('print.testimonials');
